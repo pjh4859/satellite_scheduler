@@ -1,0 +1,12 @@
+# LEOP Mission Plan Constraint Configuration Template,,,,,,,,,
+# Priority: High / Medium / Low / (Blank means None),,,,,,,,,
+# Target_Station / Target_Pass_No: Specific name/number or 'Any',,,,,,,,,
+Satellite,Activity_ID,Activity_Name,Est_Duration,Min_Contact_Req,Pre_Requisite_ID,Min_Gap_Sec,Target_Station,Target_Pass_No,Priority
+SAT_67614,101,"TC_HEATER_ON
+살기
+죽기
+누가 사느냐
+누가 죽느냐
+그것이 문제로다",60,120,None,0,Daejeon,1,High
+SAT_67614,102,TM_DUMP_01,300,400,101,1800,Any,Any,Medium
+SAT_67614,103,BATTERY_CHECK,30,60,102,3600,Any,Any,
