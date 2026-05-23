@@ -46,6 +46,9 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.horizontalHeader().setDefaultSectionSize(165)
         layout.addWidget(self.plan_table)
         
+        # 🔥 [연결 고리 복원] 사용자가 GUI 셀의 텍스트를 바꾸면 색상 스캐너가 실시간으로 가로줄을 채색하도록 시그널 바인딩!
+        self.plan_table.itemChanged.connect(self.handle_cell_changed)
+        
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Save Options:</b>"))
         
@@ -81,34 +84,68 @@ class ConstraintsPlannerTab(QWidget):
             QMessageBox.critical(self, "Parser Error", f"Failed to load constraints data:\n{str(e)}")
 
     def populate_plan_table_ui(self, plan_rows):
+        """🔥 [2번 탭 완전 유동형 리모델링] 위성별 동적 파스텔톤 실시간 매핑"""
         self.plan_table.setRowCount(0)
-        self.plan_table.setRowCount(len(plan_rows))
         
-        gui_sat_colors = {
-            "NEONSAT1": QColor(240, 248, 255),
-            "SPACEEYE-T1": QColor(255, 253, 240),
-            "DEFAULT": QColor(255, 255, 255)
-        }
+        # 데이터 일괄 주입 시 불필요한 cellChanged 중복 시그널 전파 차단
+        self.plan_table.blockSignals(True)
+        
+        self.plan_table.setRowCount(len(plan_rows))
+        from core.color_manager import color_manager
         
         for row_idx, data in enumerate(plan_rows):
-            sat_name = data.get("satellite", "").upper().strip()
-            bg_color = gui_sat_colors.get(sat_name, gui_sat_colors["DEFAULT"])
+            sat_name = data.get("satellite", "").strip()
+            _, sat_bg_color = color_manager.get_colors(sat_name)
             
             for col_idx, key in enumerate(self.plan_headers_keys):
-                cell_text = data.get(key, "")
+                cell_text = str(data.get(key, ""))
                 item = QTableWidgetItem(cell_text)
-                item.setBackground(bg_color)
+                item.setBackground(sat_bg_color)  # 위성별 고유 파스텔톤 도색
                 self.plan_table.setItem(row_idx, col_idx, item)
+                
+        self.plan_table.blockSignals(False)
+
+    def handle_cell_changed(self, item):
+        """유저가 0번 컬럼(Satellite)의 이름을 바꾸면 즉시 탐지하여 행 전체 색상을 유동적으로 변경"""
+        # 아이템이 없거나 위성 이름 컬럼(0번)이 아니면 스킵
+        if item is None or item.column() != 0:
+            return
+            
+        row = item.row()
+        sat_name = item.text().strip()
+        
+        from core.color_manager import color_manager
+        _, new_sat_color = color_manager.get_colors(sat_name)
+        
+        # 연쇄적인 변경 플래그 오작동을 차단하기 위해 시그널 잠금
+        self.plan_table.blockSignals(True)
+        
+        # 유저가 새로 기입한 위성 명칭에 맞춰 해당 가로줄 전체 레이어를 동적 컬러로 전면 갱신
+        for col_idx in range(self.plan_table.columnCount()):
+            cell = self.plan_table.item(row, col_idx)
+            if cell:
+                cell.setBackground(new_sat_color)
+                
+        self.plan_table.blockSignals(False)
 
     def click_add_plan_row(self):
+        """GUI 내 즉시 실시간 액티비티 행 삽입 및 기본 배경색 주입"""
         curr_idx = self.plan_table.rowCount()
+        
+        self.plan_table.blockSignals(True)
         self.plan_table.insertRow(curr_idx)
+        
+        from core.color_manager import color_manager
+        # 기본값인 NEONSAT1의 고유 파스텔톤을 추출하여 초기화 시 바로 발라줍니다.
+        _, default_sat_color = color_manager.get_colors("NEONSAT1")
         
         default_row = ["NEONSAT1", "NEW_ACTIVITY", f"30{curr_idx}", "None", "120", "N", "Medium"]
         for col_idx, text in enumerate(default_row):
             item = QTableWidgetItem(text)
+            item.setBackground(default_color if 'default_color' in locals() else default_sat_color)
             self.plan_table.setItem(curr_idx, col_idx, item)
             
+        self.plan_table.blockSignals(False)
         self.refresh_plan_colors_from_ui()
 
     def click_delete_plan_row(self):

@@ -123,10 +123,7 @@ def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
             ])
 
 def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_labels):
-    """2번 탭 그리드에서 추가/수정된 액티비티 사양을 위성별 파스텔톤 가로줄을 먹여 진짜 진짜 엑셀 파일로 출력"""
-    from openpyxl import Workbook
-    from openpyxl.styles import PatternFill, Font
-    
+    """2번 탭 그리드에서 추가/수정된 제약조건 명세를 위성별 파스텔톤 가로줄을 먹여 엑셀 파일로 출력"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Mission Constraints"
@@ -140,12 +137,10 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
         cell.fill = header_fill
         cell.font = header_font
         
-    sat_colors = {
-        "NEONSAT1": "F2F9FF",
-        "SPACEEYE-T1": "FFFBF0",
-        "DEFAULT": "FFFFFF"
-    }
     data_font = Font(name="맑은 고딕", size=10)
+    
+    # 🔥 고정 딕셔너리를 완전히 없애고 동적 매니저 로드
+    from core.color_manager import color_manager
     
     for row_idx, data in enumerate(extracted_plan_list, start=2):
         row_values = [
@@ -159,8 +154,10 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
         ]
         ws.append(row_values)
         
-        sat_name = data.get("satellite", "").upper().strip()
-        color_hex = sat_colors.get(sat_name, sat_colors["DEFAULT"])
+        # 🔥 [버그 해결]: GUI 화면 색상과 100% 동일한 고유 동적 파스텔 HEX 코드 자동 매칭 및 신규위성 보장
+        sat_name = data.get("satellite", "").strip()
+        color_hex, _ = color_manager.get_colors(sat_name)
+        
         row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
         
         for col_idx in range(1, len(headers_labels) + 1):
