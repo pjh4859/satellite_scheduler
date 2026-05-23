@@ -129,9 +129,11 @@ class SatelliteSchedulerApp(QMainWindow):
         
         self.table = QTableWidget()
         self.table.setColumnCount(9)
+        # 🔥 [순서 변경] Ground Station, Satellite, Pass No. 순으로 헤더 전면 재배치
         self.table.setHorizontalHeaderLabels([
-            "Select", "Satellite", "Pass No. (Orbit)", "Ground Station", "AOS (UTC)", "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status"
+            "Select", "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS (UTC)", "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status"
         ])
+        
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
@@ -277,24 +279,24 @@ class SatelliteSchedulerApp(QMainWindow):
         self.table.setRowCount(len(self.calculated_passes))
         
         for row_idx, p in enumerate(self.calculated_passes):
-            # 체크박스 아이템 마운트 및 초기 상태 바인딩
+            # 체크박스 아이템 마운트 및 초기 상태 바인딩 (0번 컬럼)
             chk_item = QTableWidgetItem()
             chk_item.setCheckState(Qt.CheckState.Checked if p.get('selected', True) else Qt.CheckState.Unchecked)
-            
-            # handle_table_lock 메커니즘이 인지해야 하는 고유 유저 데이터 주입 (튜플 규격 복원)
             chk_item.setData(Qt.ItemDataRole.UserRole, (row_idx, p.get('conflict_group', None), p['station']))
             self.table.setItem(row_idx, 0, chk_item)
             
-            # 컬럼 데이터 순차 기입
-            self.table.setItem(row_idx, 1, QTableWidgetItem(p['satellite']))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(f"Pass {p['pass_no']}"))
-            self.table.setItem(row_idx, 3, QTableWidgetItem(p['station']))
+            # 🔥 [순서 변경] 1번: 지상국 / 2번: 위성 / 3번: 패스 번호 순으로 UI 셀 주입
+            self.table.setItem(row_idx, 1, QTableWidgetItem(p['station']))                  # 1번 컬럼: Ground Station
+            self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))                # 2번 컬럼: Satellite
+            self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))        # 3번 컬럼: Pass No.
+            
+            # 4번 컬럼부터는 기존 타임라인 데이터 그대로 유지
             self.table.setItem(row_idx, 4, QTableWidgetItem(p['aos'].strftime('%Y-%m-%d %H:%M:%S')))
             self.table.setItem(row_idx, 5, QTableWidgetItem(p['los'].strftime('%Y-%m-%d %H:%M:%S')))
             self.table.setItem(row_idx, 6, QTableWidgetItem(str(p['duration'])))
             self.table.setItem(row_idx, 7, QTableWidgetItem(str(p['max_el'])))
             
-            # 경합 유무 상태 텍스트 출력 및 배경색 하이라이트 동적 부여
+            # 경합 유무 상태 텍스트 출력 및 배경색 하이라이트
             status_text = p.get('status', 'Normal')
             self.table.setItem(row_idx, 8, QTableWidgetItem(status_text))
             
