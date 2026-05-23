@@ -267,14 +267,57 @@ class PassPredictTab(QWidget):
                 self.main_app.is_populating = False
 
     def click_export_csv(self):
-        if not self.main_app.calculated_passes: return
+        """🔥 [더미 데이터 완전 차단] 오직 GUI 화면에서 '선택된(selected=True)' 패스만 격리하여 CSV로 백업"""
+        if not self.main_app.calculated_passes: 
+            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
+            return
+            
+        # 백엔드 버퍼 전체를 던지지 않고, 오직 체크박스가 살아있는 정제 데이터만 필터링
+        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
+        if not selected_only:
+            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
+            return
+            
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", "", "CSV Files (*.csv)")
-        if path: export_to_csv(path, self.main_app.calculated_passes)
+        if path: 
+            export_to_csv(path, selected_only)
+            QMessageBox.information(self, "Export Success", f"Successfully exported {len(selected_only)} active passes to CSV.")
 
     def click_export_yaml(self):
-        if not self.main_app.calculated_passes: return
+        """🔥 [버그 영구 박멸] 고스트 킹세종 더미 데이터 유입을 차단하고, 체크된 유효 타임라인만 YAML 빌드"""
+        if not self.main_app.calculated_passes: 
+            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
+            return
+            
+        # 오직 체크가 유효한 행들만 추출하여 누적 고스트 버퍼 원천 봉쇄
+        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
+        if not selected_only:
+            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
+            return
+            
         path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", "", "YAML Files (*.yaml)")
-        if path: export_to_yaml(path, self.main_app.calculated_passes)
+        if path: 
+            export_to_yaml(path, selected_only)
+            QMessageBox.information(self, "Export Success", f"Successfully compiled {len(selected_only)} active passes to YAML.")
+
+    def click_export_excel(self):
+        """🎨 [색상 동기화 통합형] 오직 선택된 행들만 필터링하여 이쁜 파스텔톤 엑셀 레이어 덤프"""
+        if not self.main_app.calculated_passes: 
+            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
+            return
+            
+        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
+        if not selected_only:
+            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
+            return
+            
+        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
+        if path:
+            try:
+                export_to_excel_with_color(path, selected_only)
+                QMessageBox.information(self, "Export Success", f"Successfully generated colorized spreadsheet for {len(selected_only)} passes!")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
 
     def set_all_checkboxes(self, check_state):
         if not self.main_app.calculated_passes:
@@ -287,17 +330,4 @@ class PassPredictTab(QWidget):
                 item.setCheckState(target_state)
                 self.main_app.calculated_passes[r]['selected'] = check_state
         self.main_app.is_populating = False
-        self.populate_table()
-
-    def click_export_excel(self):
-        if not self.main_app.calculated_passes: return
-        if not any(p['selected'] for p in self.main_app.calculated_passes):
-            QMessageBox.warning(self, "Warning", "No passes are selected.")
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
-        if path:
-            try:
-                export_to_excel_with_color(path, self.main_app.calculated_passes)
-                QMessageBox.information(self, "Export Success", "Excel file generated successfully!")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
+        self.populate_table()    

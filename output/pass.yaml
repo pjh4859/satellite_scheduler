@@ -1,4 +1,4 @@
-generation_timestamp: '2026-05-23T17:56:05.914429+00:00'
+generation_timestamp: '2026-05-23T18:04:36.919304+00:00'
 total_passes_count: 53
 predicted_passes:
 - station: Svalbard
@@ -70,7 +70,7 @@ predicted_passes:
   pass_no: 5
   aos: '2026-05-23 23:39:55'
   los: '2026-05-23 23:45:19'
-  duration_sec: 324.8
+  duration_sec: 324.7
   max_elevation_deg: 19.08
   status: Normal
 - station: Svalbard
@@ -126,7 +126,7 @@ predicted_passes:
   pass_no: 7
   aos: '2026-05-24 02:18:52'
   los: '2026-05-24 02:24:33'
-  duration_sec: 341.2
+  duration_sec: 341.1
   max_elevation_deg: 24.93
   status: Normal
 - station: Jeju
@@ -302,7 +302,7 @@ predicted_passes:
   pass_no: 14
   aos: '2026-05-24 14:04:25'
   los: '2026-05-24 14:10:56'
-  duration_sec: 390.9
+  duration_sec: 390.8
   max_elevation_deg: 27.04
   status: Normal
 - station: Jeju
@@ -310,7 +310,7 @@ predicted_passes:
   pass_no: 14
   aos: '2026-05-24 14:19:08'
   los: '2026-05-24 14:25:56'
-  duration_sec: 408.0
+  duration_sec: 408.1
   max_elevation_deg: 82.07
   status: Normal
 - station: Daejeon
@@ -342,7 +342,7 @@ predicted_passes:
   pass_no: 15
   aos: '2026-05-24 14:58:58'
   los: '2026-05-24 15:04:22'
-  duration_sec: 323.8
+  duration_sec: 323.9
   max_elevation_deg: 19.65
   status: Normal
 - station: King Sejong
@@ -350,7 +350,7 @@ predicted_passes:
   pass_no: 15
   aos: '2026-05-24 15:13:46'
   los: '2026-05-24 15:19:28'
-  duration_sec: 341.3
+  duration_sec: 341.2
   max_elevation_deg: 22.29
   status: Normal
 - station: Svalbard
