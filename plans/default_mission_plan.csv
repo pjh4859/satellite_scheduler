@@ -1,12 +1,6 @@
-# LEOP Mission Plan Constraint Configuration Template,,,,,,,,,
-# Priority: High / Medium / Low / (Blank means None),,,,,,,,,
-# Target_Station / Target_Pass_No: Specific name/number or 'Any',,,,,,,,,
-Satellite,Activity_ID,Activity_Name,Est_Duration,Min_Contact_Req,Pre_Requisite_ID,Min_Gap_Sec,Target_Station,Target_Pass_No,Priority
-NEONSAT1A(67614),101,"TC_HEATER_ON
-»ì±â
-Á×±â
-´©°¡ »ç´À³Ä
-´©°¡ Á×´À³Ä
-±×°ÍÀÌ ¹®Á¦·Î´Ù",60,120,None,0,Daejeon,1,High
-SAT_67614,102,TM_DUMP_01,300,400,101,1800,Any,Any,Medium
-SAT_67614,103,BATTERY_CHECK,30,60,102,3600,Any,Any,
+ï»¿# LEOP ë¯¸ì…˜ ì œì•½ì¡°ê±´ ë° ì•¡í‹°ë¹„í‹° ëª…ì„¸ ê·œì¹™
+# X-Band ì—¬ë¶€: Y / N, Priority: High / Medium / Low
+Satellite,Activity,Activity Sequence ID,Pre Activity Sequence ID,ìµœì†Œ pass contact ì‹œê°„,X-Band ì—¬ë¶€,Priority
+NEONSAT1,TC_íˆí„°_ì˜¨,101,None,120,N,High
+NEONSAT1,TM_ë¤í”„_Xë°´ë“œ,102,101,300,Y,Medium
+SPACEEYE-T1,ì•ˆí…Œë‚˜_ì „ê°œ,201,None,60,N,High
