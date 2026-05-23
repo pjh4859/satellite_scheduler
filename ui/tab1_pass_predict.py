@@ -99,7 +99,10 @@ class PassPredictTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Select", "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS (UTC)", "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # 🔥 [마우스 폭 조절 연동] Stretch 대신 Interactive 모드로 변경하여 마우스 드래그를 활성화합니다.
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setDefaultSectionSize(140)  # 초기 로드 시 각 열의 기본 너비 설정
+        
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
         
