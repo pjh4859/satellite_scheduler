@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
-from core.exporter import export_to_csv, export_to_yaml
+from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.plan_parser import create_default_plan_csv, load_plan_csv, save_plan_to_yaml
 
 class SatelliteSchedulerApp(QMainWindow):
@@ -48,7 +48,7 @@ class SatelliteSchedulerApp(QMainWindow):
         self.build_tab2_ui()
 
     def build_tab1_ui(self):
-        """기존 1번 블록 패스 예측 연산 화면 구조"""
+        """기존 1번 블록 패스 예측 연산 화면 구조 (전체 선택/해제 및 엑셀 버튼 확장)"""
         layout = QHBoxLayout(self.tab1_pass_calc)
         left_panel = QVBoxLayout()
         
@@ -107,8 +107,26 @@ class SatelliteSchedulerApp(QMainWindow):
         
         layout.addLayout(left_panel, stretch=1)
         
+        # --- 우측 결과 매트릭스 패널 영역 ---
         right_panel = QVBoxLayout()
-        right_panel.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
+        
+        # 🔥 [신규] 전체 선택 / 전체 해제 미니 컨트롤 바 레이아웃 추가
+        select_all_layout = QHBoxLayout()
+        select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
+        select_all_layout.addStretch()
+        
+        self.btn_select_all = QPushButton("☑ Check All")
+        self.btn_select_all.setFixedWidth(100)
+        self.btn_select_all.clicked.connect(lambda: self.set_all_checkboxes(True))
+        select_all_layout.addWidget(self.btn_select_all)
+        
+        self.btn_unselect_all = QPushButton("☒ Uncheck All")
+        self.btn_unselect_all.setFixedWidth(100)
+        self.btn_unselect_all.clicked.connect(lambda: self.set_all_checkboxes(False))
+        select_all_layout.addWidget(self.btn_unselect_all)
+        
+        right_panel.addLayout(select_all_layout)
+        
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
@@ -118,12 +136,19 @@ class SatelliteSchedulerApp(QMainWindow):
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
         
+        # 하단 익스포트 버튼 레이아웃
         btn_layout = QHBoxLayout()
-        self.btn_csv = QPushButton("Export Predicted Passes (CSV)")
+        self.btn_csv = QPushButton("Export Selected to CSV")
         self.btn_csv.clicked.connect(self.click_export_csv)
         btn_layout.addWidget(self.btn_csv)
         
-        self.btn_yaml = QPushButton("Export Predicted Passes (YAML)")
+        # 🔥 [신규] 알록달록 엑셀 출력 전용 버튼 마운트
+        self.btn_excel = QPushButton("🎨 Export Selected to Excel (.xlsx)")
+        self.btn_excel.setStyleSheet("font-weight: bold; color: #1E7145;") # 엑셀 시그니처 초록색 폰트
+        self.btn_excel.clicked.connect(self.click_export_excel)
+        btn_layout.addWidget(self.btn_excel)
+        
+        self.btn_yaml = QPushButton("Export Selected to YAML")
         self.btn_yaml.clicked.connect(self.click_export_yaml)
         btn_layout.addWidget(self.btn_yaml)
         
@@ -365,3 +390,39 @@ class SatelliteSchedulerApp(QMainWindow):
         if path:
             save_plan_to_yaml(path, extracted_data)
             QMessageBox.information(self, "Compiled", "Mission constraints compiled and exported successfully.")
+
+    def set_all_checkboxes(self, check_state):
+        """🔥 버튼 클릭 시 화면의 모든 체크박스를 일괄 켜거나 끕니다."""
+        if not self.calculated_passes:
+            return
+            
+        self.is_populating = True  # 상호 락킹 이벤트 핸들러가 오작동하지 않도록 임시 차단
+        target_state = Qt.CheckState.Checked if check_state else Qt.CheckState.Unchecked
+        
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            if item:
+                item.setCheckState(target_state)
+                # 백엔드 메모리 배열도 동기화
+                self.calculated_passes[r]['selected'] = check_state
+                
+        self.is_populating = False
+        # 충돌 하이라이트 배경색 유지를 위해 가볍게 리프레시
+        self.populate_table()
+
+    def click_export_excel(self):
+        """🔥 엑셀 내보내기 버튼 이벤트: 선택된 데이터들만 파스텔톤 색상을 입혀 xlsx로 저장"""
+        if not self.calculated_passes: 
+            return
+        # 선택된 패스가 단 하나도 없는지 방어 검증
+        if not any(p['selected'] for p in self.calculated_passes):
+            QMessageBox.warning(self, "Warning", "No passes are selected. Please check at least one pass.")
+            return
+            
+        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
+        if path:
+            try:
+                export_to_excel_with_color(path, self.calculated_passes)
+                QMessageBox.information(self, "Export Success", "Excel file generated with station color codes successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
