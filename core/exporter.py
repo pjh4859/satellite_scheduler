@@ -171,3 +171,69 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
         ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
         
     wb.save(file_path)
+
+# core/exporter.py 맨 하단의 3번 탭 전용 함수 영역을 교체해 줍니다.
+
+def export_final_schedule_to_csv(file_path, final_data):
+    """3번 탭 마스터 융합 스케줄을 Select 제외 양식 및 순수 activity 매핑 명세로 CSV 저장"""
+    import csv
+    with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        # Select를 완전히 배제한 9개 마스터 헤더 선언
+        writer.writerow(["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity"])
+        for item in final_data:
+            writer.writerow([
+                item["station"], item["satellite"], item["pass_no"],
+                item["aos"], item["los"], item["duration"], item["max_el"],
+                item["status"], item["activity"]
+            ])
+
+def export_final_schedule_to_excel(file_path, final_data, color_mode):
+    """3번 탭 마스터 융합 스케줄을 Select 제외 양식 및 색상 모드 연동 규격으로 Excel 저장"""
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Font
+    from core.color_manager import color_manager
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Final Integrated Schedule"
+    
+    headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity"]
+    ws.append(headers)
+    
+    header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+    header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        
+    data_font = Font(name="맑은 고딕", size=10)
+    
+    for row_idx, item in enumerate(final_data, start=2):
+        ws.append([
+            item["station"], item["satellite"], item["pass_no"],
+            item["aos"], item["los"], item["duration"], item["max_el"],
+            item["status"], item["activity"]
+        ])
+        
+        # GUI의 현재 지상국/위성 라디오 채색 기준과 100% 동기화 매핑
+        if color_mode == "STATION":
+            st_key = item["station"].strip()
+            color_hex, _ = color_manager.get_station_colors(st_key)
+        else:
+            sat_key = item["satellite"].split("(")[0].strip()
+            color_hex, _ = color_manager.get_colors(sat_key)
+            
+        row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.fill = row_fill
+            cell.font = data_font
+            
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = col[0].column_letter
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
+        
+    wb.save(file_path)
