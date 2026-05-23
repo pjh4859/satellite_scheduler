@@ -2,7 +2,7 @@
 # Priority: High / Medium / Low / (Blank means None),,,,,,,,,
 # Target_Station / Target_Pass_No: Specific name/number or 'Any',,,,,,,,,
 Satellite,Activity_ID,Activity_Name,Est_Duration,Min_Contact_Req,Pre_Requisite_ID,Min_Gap_Sec,Target_Station,Target_Pass_No,Priority
-SAT_67614,101,"TC_HEATER_ON
+NEONSAT1A(67614),101,"TC_HEATER_ON
 살기
 죽기
 누가 사느냐

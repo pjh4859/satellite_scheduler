@@ -234,16 +234,58 @@ class SatelliteSchedulerApp(QMainWindow):
         self.populate_table()
 
     def populate_table(self):
-        self.is_populating = True
+        """계산된 패스 데이터를 UI 테이블 상에 렌더링 (무한 루프 방지 및 위성 명칭 실시간 역추적 완비)"""
+        if self.is_populating:
+            return
+            
         self.table.setRowCount(0)
+        if not self.calculated_passes:
+            return
+            
+        # 🔥 1단계: 시그널 연동 무한 루프(RecursionError) 차단용 락킹 활성화
+        self.is_populating = True
+        
+        # -----------------------------------------------------------------
+        # 🔥 2단계: 기존 'SAT_67614' 구조를 'NEONSAT1(67614)' 형태로 변환하는 전처리
+        # -----------------------------------------------------------------
+        import os
+        tle_dir = "tle"
+        for p in self.calculated_passes:
+            sat_key = p['satellite']  # 예: "SAT_67614"
+            if "(" not in sat_key:    # 이미 가공된 포맷이 아닐 때만 역추적 수행
+                clean_id = sat_key.replace("SAT_", "").strip()
+                pure_file_name = sat_key  # 파일 검색 실패 시 기본값 방어
+                
+                if os.path.exists(tle_dir):
+                    for filename in os.listdir(tle_dir):
+                        if filename.endswith(".tle") or filename.endswith(".txt"):
+                            try:
+                                with open(os.path.join(tle_dir, filename), "r", encoding="utf-8") as f:
+                                    content = f.read()
+                                if clean_id in content:
+                                    pure_file_name = os.path.splitext(filename)[0]  # 예: "NEONSAT1"
+                                    break
+                            except:
+                                continue
+                
+                # 메모리 및 출력 데이터의 위성 명칭 자체를 규격에 맞춰 영구 동기화
+                p['satellite'] = f"{pure_file_name}({clean_id})"
+
+        # -----------------------------------------------------------------
+        # 🔥 3단계: 가공 완료된 최종 데이터셋을 기반으로 순정 PyQt6 그리드 렌더링
+        # -----------------------------------------------------------------
+        self.table.setRowCount(len(self.calculated_passes))
+        
         for row_idx, p in enumerate(self.calculated_passes):
-            self.table.insertRow(row_idx)
+            # 체크박스 아이템 마운트 및 초기 상태 바인딩
             chk_item = QTableWidgetItem()
-            chk_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            chk_item.setCheckState(Qt.CheckState.Checked if p['selected'] else Qt.CheckState.Unchecked)
-            chk_item.setData(Qt.ItemDataRole.UserRole, (row_idx, p['conflict_group'], p['station']))
+            chk_item.setCheckState(Qt.CheckState.Checked if p.get('selected', True) else Qt.CheckState.Unchecked)
+            
+            # handle_table_lock 메커니즘이 인지해야 하는 고유 유저 데이터 주입 (튜플 규격 복원)
+            chk_item.setData(Qt.ItemDataRole.UserRole, (row_idx, p.get('conflict_group', None), p['station']))
             self.table.setItem(row_idx, 0, chk_item)
             
+            # 컬럼 데이터 순차 기입
             self.table.setItem(row_idx, 1, QTableWidgetItem(p['satellite']))
             self.table.setItem(row_idx, 2, QTableWidgetItem(f"Pass {p['pass_no']}"))
             self.table.setItem(row_idx, 3, QTableWidgetItem(p['station']))
@@ -252,11 +294,19 @@ class SatelliteSchedulerApp(QMainWindow):
             self.table.setItem(row_idx, 6, QTableWidgetItem(str(p['duration'])))
             self.table.setItem(row_idx, 7, QTableWidgetItem(str(p['max_el'])))
             
-            status_item = QTableWidgetItem(p['status'])
-            self.table.setItem(row_idx, 8, status_item)
-            bg_color = QColor(255, 235, 235) if "Conflict" in p['status'] else QColor(240, 248, 240)
-            for col in range(self.table.columnCount()):
-                self.table.item(row_idx, col).setBackground(bg_color)
+            # 경합 유무 상태 텍스트 출력 및 배경색 하이라이트 동적 부여
+            status_text = p.get('status', 'Normal')
+            self.table.setItem(row_idx, 8, QTableWidgetItem(status_text))
+            
+            # 오리지널 행 색상 테마: Conflict 그룹 소속일 경우 부드러운 파스텔 핑크 오렌지로 자동 마킹
+            if "Conflict" in status_text:
+                conflict_color = QColor(255, 235, 235)
+                for col_idx in range(self.table.columnCount()):
+                    cell = self.table.item(row_idx, col_idx)
+                    if cell:
+                        cell.setBackground(conflict_color)
+                        
+        # 🔥 4단계: 렌더링 전 과정이 안전하게 종료되었으므로 스위치 해제
         self.is_populating = False
 
     def handle_table_lock(self, item):
