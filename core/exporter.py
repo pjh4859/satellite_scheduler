@@ -54,14 +54,13 @@ def export_to_yaml(file_path, passes_list):
         yaml.dump(payload, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 def export_to_excel_with_color(file_path, passes_list):
-    """🔥 GUI 변경 순서 적용: Station, Satellite, Pass_No 순으로 이쁜 파스텔톤 엑셀 백업"""
+    """🔥 GUI 변경 순서 적용: Station, Satellite, Pass_No 순으로 유동적 파스텔톤 엑셀 백업"""
     selected_passes = [p for p in passes_list if p.get('selected', False)]
     
     wb = Workbook()
     ws = wb.active
     ws.title = "Pass Schedule"
     
-    # 헤더 작성 및 스타일링 순서 변경
     headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status"]
     ws.append(headers)
     
@@ -72,34 +71,24 @@ def export_to_excel_with_color(file_path, passes_list):
         cell.fill = header_fill
         cell.font = header_font
 
-    # 지상국별 파스텔톤 색상 매핑 테이블
-    station_colors = {
-        "daejeon": "E6F2FF",    # 연한 파랑
-        "jeju": "FFFDE6",       # 연한 노랑
-        "svalbard": "E6FDE6",   # 연한 녹색
-        "king sejong": "F2E6FF" # 연한 보라
-    }
-    default_color = "FFFFFF"
-    
+    from core.color_manager import color_manager
     data_font = Font(name="맑은 고딕", size=10)
     
-    # 데이터 행 기입 순서 재배치
     for row_idx, p in enumerate(selected_passes, start=2):
         row_data = [
-            p['station'],     # 1. Station
-            p['satellite'],   # 2. Satellite
-            f"Pass {p['pass_no']}", # 3. Pass_No
-            p['aos'].strftime('%Y-%m-%d %H:%M:%S'),
-            p['los'].strftime('%Y-%m-%d %H:%M:%S'),
-            p['duration'],
-            p['max_el'],
-            p['status']
+            p['station'], p['satellite'], f"Pass {p['pass_no']}",
+            p['aos'].strftime('%Y-%m-%d %H:%M:%S'), p['los'].strftime('%Y-%m-%d %H:%M:%S'),
+            p['duration'], p['max_el'], p['status']
         ]
         ws.append(row_data)
         
-        # 지상국 색상 추출 및 배경색 주입
-        st_key = p['station'].lower().strip()
-        color_hex = station_colors.get(st_key, default_color)
+        # 지상국 이름을 매니저에 질의하여 실시간 화면과 동기화된 파스텔 HEX 코드 자동 획득
+        st_key = p['station'].strip()
+        color_hex, _ = color_manager.get_station_colors(st_key)
+        
+        # ❌ [기존 코드 제거]: if "Conflict" in p['status']: color_hex = "FFEBEB"
+        # 💡 경합(Conflict) 상태인 패스도 오버라이드 없이 고유의 지상국 색상이 그대로 유지됩니다.
+            
         row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
         
         for col_num in range(1, len(headers) + 1):
@@ -107,7 +96,6 @@ def export_to_excel_with_color(file_path, passes_list):
             cell.fill = row_fill
             cell.font = data_font
             
-    # 열 너비 최적화
     for col in ws.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = col[0].column_letter

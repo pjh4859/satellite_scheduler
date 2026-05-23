@@ -161,6 +161,7 @@ class PassPredictTab(QWidget):
         self.populate_table()
 
     def populate_table(self):
+        """계산된 패스 데이터를 UI 테이블 상에 렌더링 (지상국별 실시간 동적 채색 반영)"""
         if self.main_app.is_populating:
             return
         self.table.setRowCount(0)
@@ -168,78 +169,102 @@ class PassPredictTab(QWidget):
             return
             
         self.main_app.is_populating = True
-        import os
-        tle_dir = "tle"
-        for p in self.main_app.calculated_passes:
-            sat_key = p['satellite']
-            if "(" not in sat_key:
-                clean_id = sat_key.replace("SAT_", "").strip()
-                pure_file_name = sat_key
-                if os.path.exists(tle_dir):
-                    for filename in os.listdir(tle_dir):
-                        if filename.endswith(".tle") or filename.endswith(".txt"):
-                            try:
-                                with open(os.path.join(tle_dir, filename), "r", encoding="utf-8") as f:
-                                    content = f.read()
-                                if clean_id in content:
-                                    pure_file_name = os.path.splitext(filename)[0]
-                                    break
-                            except:
-                                continue
-                p['satellite'] = f"{pure_file_name}({clean_id})"
+        
+        try:
+            import os
+            tle_dir = "tle"
+            for p in self.main_app.calculated_passes:
+                sat_key = p['satellite']
+                if "(" not in sat_key:
+                    clean_id = sat_key.replace("SAT_", "").strip()
+                    pure_file_name = sat_key
+                    if os.path.exists(tle_dir):
+                        for filename in os.listdir(tle_dir):
+                            if filename.endswith(".tle") or filename.endswith(".txt"):
+                                try:
+                                    with open(os.path.join(tle_dir, filename), "r", encoding="utf-8") as f:
+                                        content = f.read()
+                                    if clean_id in content:
+                                        pure_file_name = os.path.splitext(filename)[0]
+                                        break
+                                except:
+                                    continue
+                    p['satellite'] = f"{pure_file_name}({clean_id})"
 
-        self.table.setRowCount(len(self.main_app.calculated_passes))
-        for row_idx, p in enumerate(self.main_app.calculated_passes):
-            chk_item = QTableWidgetItem()
-            chk_item.setCheckState(Qt.CheckState.Checked if p.get('selected', True) else Qt.CheckState.Unchecked)
-            chk_item.setData(Qt.ItemDataRole.UserRole, (row_idx, p.get('conflict_group', None), p['station']))
-            self.table.setItem(row_idx, 0, chk_item)
+            self.table.setRowCount(len(self.main_app.calculated_passes))
+            from core.color_manager import color_manager
             
-            self.table.setItem(row_idx, 1, QTableWidgetItem(p['station']))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))
-            self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))
-            self.table.setItem(row_idx, 4, QTableWidgetItem(p['aos'].strftime('%Y-%m-%d %H:%M:%S')))
-            self.table.setItem(row_idx, 5, QTableWidgetItem(p['los'].strftime('%Y-%m-%d %H:%M:%S')))
-            self.table.setItem(row_idx, 6, QTableWidgetItem(str(p['duration'])))
-            self.table.setItem(row_idx, 7, QTableWidgetItem(str(p['max_el'])))
-            
-            status_text = p.get('status', 'Normal')
-            self.table.setItem(row_idx, 8, QTableWidgetItem(status_text))
-            
-            if "Conflict" in status_text:
-                conflict_color = QColor(255, 235, 235)
+            for row_idx, p in enumerate(self.main_app.calculated_passes):
+                chk_item = QTableWidgetItem()
+                chk_item.setCheckState(Qt.CheckState.Checked if p.get('selected', True) else Qt.CheckState.Unchecked)
+                chk_item.setData(Qt.ItemDataRole.UserRole, (row_idx, p.get('conflict_group', None), p['station']))
+                self.table.setItem(row_idx, 0, chk_item)
+                
+                self.table.setItem(row_idx, 1, QTableWidgetItem(p['station']))
+                self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))
+                self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))
+                self.table.setItem(row_idx, 4, QTableWidgetItem(p['aos'].strftime('%Y-%m-%d %H:%M:%S')))
+                self.table.setItem(row_idx, 5, QTableWidgetItem(p['los'].strftime('%Y-%m-%d %H:%M:%S')))
+                self.table.setItem(row_idx, 6, QTableWidgetItem(str(p['duration'])))
+                self.table.setItem(row_idx, 7, QTableWidgetItem(str(p['max_el'])))
+                
+                status_text = p.get('status', 'Normal')
+                self.table.setItem(row_idx, 8, QTableWidgetItem(status_text))
+                
+                # 🔥 [하드코딩 완전 제거]: 새로운 지상국 명칭이 들어와도 실시간으로 고유 파스텔톤 추출
+                st_raw = p['station'].split("(")[0].strip()
+                _, station_bg_color = color_manager.get_station_colors(st_raw)
+                
+                # 경합 행은 식별을 위해 연핑크 고정, 정상 행은 지상국별 유동 컬러 자동 주입
+                if "Conflict" in status_text:
+                    row_color = QColor(255, 235, 235)
+                else:
+                    row_color = station_bg_color
+                    
                 for col_idx in range(self.table.columnCount()):
                     cell = self.table.item(row_idx, col_idx)
                     if cell:
-                        cell.setBackground(conflict_color)
-                        
-        self.main_app.is_populating = False
+                        cell.setBackground(row_color)
+        finally:
+            self.main_app.is_populating = False
 
     def handle_table_lock(self, item):
+        """체크박스 상호 배제 잠금 메커니즘 (안전한 신호 차단 스위치 장착형)"""
         if self.main_app.is_populating or item.column() != 0:
             return
+            
         user_data = item.data(Qt.ItemDataRole.UserRole)
-        if not user_data: return
+        if not user_data: 
+            return
+            
         current_row, group_id, station_name = user_data
         if group_id is None:
             self.main_app.calculated_passes[current_row]['selected'] = (item.checkState() == Qt.CheckState.Checked)
             return
+            
         if item.checkState() == Qt.CheckState.Checked:
             self.main_app.is_populating = True
-            for r in range(self.table.rowCount()):
-                if r == current_row:
-                    self.main_app.calculated_passes[r]['selected'] = True
-                    continue
-                other_item = self.table.item(r, 0)
-                o_row, o_group, o_station = other_item.data(Qt.ItemDataRole.UserRole)
-                if o_station == station_name and o_group == group_id:
-                    other_item.setCheckState(Qt.CheckState.Unchecked)
-                    self.main_app.calculated_passes[r]['selected'] = False
-            self.main_app.is_populating = False
+            try:
+                for r in range(self.table.rowCount()):
+                    if r == current_row:
+                        self.main_app.calculated_passes[r]['selected'] = True
+                        continue
+                    other_item = self.table.item(r, 0)
+                    if other_item is not None and other_item.data(Qt.ItemDataRole.UserRole) is not None:
+                        o_row, o_group, o_station = other_item.data(Qt.ItemDataRole.UserRole)
+                        if o_station == station_name and o_group == group_id:
+                            other_item.setCheckState(Qt.CheckState.Unchecked)
+                            self.main_app.calculated_passes[r]['selected'] = False
+            finally:
+                self.main_app.is_populating = False
             self.populate_table()
         else:
             self.main_app.calculated_passes[current_row]['selected'] = False
-            self.populate_table()
+            self.main_app.is_populating = True
+            try:
+                self.populate_table()
+            finally:
+                self.main_app.is_populating = False
 
     def click_export_csv(self):
         if not self.main_app.calculated_passes: return
