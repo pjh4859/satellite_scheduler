@@ -35,7 +35,7 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
     return satellites
 
 def parse_stations_from_dir(stations_dir):
-    """🔥 지상국 속성 확장: 이름, 위도, 경도, 다운로드 가능여부, 커맨딩 가능여부를 읽어옵니다."""
+    """지상국 속성 확장: 이름, 위도, 경도, 다운로드 가능여부, 커맨딩 가능여부를 읽어옵니다."""
     stations_list = []
     if not os.path.exists(stations_dir):
         os.makedirs(stations_dir)
@@ -61,18 +61,17 @@ def parse_stations_from_dir(stations_dir):
                             name = parts[0]
                             lat = float(parts[1])
                             lon = float(parts[2])
-                            # 뒤쪽 필드가 누락되었을 경우를 대비한 기본값(Y) 방어 코드
                             is_down = parts[3].upper() if len(parts) > 3 else "Y"
                             is_cmd = parts[4].upper() if len(parts) > 4 else "Y"
                             
                             if not any(s[0] == name for s in stations_list):
-                                # 세 번째 할당 엔진에서 조회할 수 있도록 다 들고 있도록 확장
                                 stations_list.append((name, lat, lon, is_down, is_cmd))
                         except ValueError:
                             continue
     return stations_list
 
-def find_orbit_starts_at_north_pole(satellite, ts, t0, t1):
+# 🔥 [시작 패스 번호 연동 추가]: start_pass_no 파라미터를 받아 카운팅의 초기 기준을 오프셋 적용
+def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
     """시간 윈도우 내에서 위성이 북극점(최고 위도)을 통과하는 시점들을 추적해 궤도 카운트를 생성합니다."""
     orbit_starts = []
     start_dt = t0.utc_datetime()
@@ -82,7 +81,8 @@ def find_orbit_starts_at_north_pole(satellite, ts, t0, t1):
     is_ascending = True
     step = timedelta(seconds=60)
     
-    orbit_counter = 1
+    # 💡 유저가 오프셋으로 지정한 start_pass_no부터 궤도 카운팅을 연쇄 시작하도록 정밀 연결!
+    orbit_counter = start_pass_no
     orbit_starts.append((orbit_counter, start_dt))
     
     while current_dt <= end_dt:
@@ -100,32 +100,27 @@ def find_orbit_starts_at_north_pole(satellite, ts, t0, t1):
         current_dt += step
     return orbit_starts
 
-def get_orbit_number(aos_time, orbit_timeline):
+def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
     for orbit_no, start_dt in reversed(orbit_timeline):
         if aos_time >= start_dt:
             return orbit_no
-    return 1
+    return default_start_pass
 
-def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur):
+# 🔥 [시작 패스 번호 파라미터 추가]: 기본값 1 세팅
+def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, start_pass_no=1):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
     if end_dt.tzinfo is None:
         end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    # 🛠️ 수정본 (Skyfield 최신 규격 반영):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # 1. 파일들을 읽어올 경로를 Loader 객체에 먼저 주입합니다.
     from skyfield.api import Loader
     custom_loader = Loader(base_dir)
 
-    # 2. 생성된 로더를 통해 timescale을 호출합니다.
-    # 수동으로 복사해 둔 4개 파일(de421.bsp 등)이 base_dir에 있다면 
-    # builtin=False 설정에 의해 인터넷을 켜지 않고 해당 파일들을 곧바로 파싱합니다.
     ts = custom_loader.timescale(builtin=False)
     t0 = ts.from_datetime(start_dt)
     t1 = ts.from_datetime(end_dt)
     
-    # station_configs는 이제 (name, lat, lon, is_down, is_cmd) 구조임
     stations = {cfg[0]: wgs84.latlon(cfg[1], cfg[2]) for cfg in station_configs}
     raw_passes = []
     
@@ -135,7 +130,8 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
         except Exception:
             continue
             
-        orbit_timeline = find_orbit_starts_at_north_pole(satellite, ts, t0, t1)
+        # 💡 북극점 궤도 연산기에 start_pass_no 전달
+        orbit_timeline = find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=start_pass_no)
             
         for gs_name, gs_loc in stations.items():
             times, events = satellite.find_events(gs_loc, t0, t1, altitude_degrees=min_el)
@@ -152,7 +148,7 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                     duration = (current_pass['los'] - current_pass['aos']).total_seconds()
                     
                     if duration >= min_dur:
-                        pass_no = get_orbit_number(current_pass['aos'], orbit_timeline)
+                        pass_no = get_orbit_number(current_pass['aos'], orbit_timeline, default_start_pass=start_pass_no)
                         raw_passes.append({
                             'satellite': sat_name,
                             'station': gs_name,

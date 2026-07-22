@@ -71,6 +71,15 @@ class PassPredictTab(QWidget):
         dur_layout.addWidget(self.min_dur_spin)
         left_panel.addLayout(dur_layout)
         
+        # 🔥 [신규 추가]: 시작 패스 번호(Start Pass No.) 입력 컨트롤
+        pass_no_layout = QHBoxLayout()
+        pass_no_layout.addWidget(QLabel("Start Pass No.:"))
+        self.start_pass_spin = QSpinBox()
+        self.start_pass_spin.setRange(1, 99999) # 1번부터 99999번까지 유동 설정
+        self.start_pass_spin.setValue(1)        # 디폴트 값: 1
+        pass_no_layout.addWidget(self.start_pass_spin)
+        left_panel.addLayout(pass_no_layout)
+        
         self.btn_calculate = QPushButton("Calculate Pass Schedule")
         self.btn_calculate.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;")
         self.btn_calculate.clicked.connect(self.run_scheduling)
@@ -99,9 +108,8 @@ class PassPredictTab(QWidget):
         self.table.setHorizontalHeaderLabels([
             "Select", "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS (UTC)", "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status"
         ])
-        # 🔥 [마우스 폭 조절 연동] Stretch 대신 Interactive 모드로 변경하여 마우스 드래그를 활성화합니다.
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setDefaultSectionSize(140)  # 초기 로드 시 각 열의 기본 너비 설정
+        self.table.horizontalHeader().setDefaultSectionSize(140)
         
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
@@ -153,11 +161,18 @@ class PassPredictTab(QWidget):
             
         min_el = self.min_el_spin.value()
         min_dur = self.min_dur_spin.value()
+        
+        # 🔥 [신규 파라미터 획득]: UI 스핀박스에서 유저 지정 시작 패스 번호 추출
+        start_pass_no = self.start_pass_spin.value()
+        
         if not tle_data or not selected_stations:
             QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
             return
             
-        self.main_app.calculated_passes = calculate_passes(tle_data, selected_stations, start_dt, end_dt, min_el, min_dur)
+        # 🔥 calculate_passes 호출 시 start_pass_no 인자 추가 넘김
+        self.main_app.calculated_passes = calculate_passes(
+            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no
+        )
         self.populate_table()
 
     def populate_table(self):
@@ -211,11 +226,9 @@ class PassPredictTab(QWidget):
                 status_text = p.get('status', 'Normal')
                 self.table.setItem(row_idx, 8, QTableWidgetItem(status_text))
                 
-                # 🔥 [하드코딩 완전 제거]: 새로운 지상국 명칭이 들어와도 실시간으로 고유 파스텔톤 추출
                 st_raw = p['station'].split("(")[0].strip()
                 _, station_bg_color = color_manager.get_station_colors(st_raw)
                 
-                # 경합 행은 식별을 위해 연핑크 고정, 정상 행은 지상국별 유동 컬러 자동 주입
                 if "Conflict" in status_text:
                     row_color = QColor(255, 235, 235)
                 else:
@@ -267,57 +280,14 @@ class PassPredictTab(QWidget):
                 self.main_app.is_populating = False
 
     def click_export_csv(self):
-        """🔥 [더미 데이터 완전 차단] 오직 GUI 화면에서 '선택된(selected=True)' 패스만 격리하여 CSV로 백업"""
-        if not self.main_app.calculated_passes: 
-            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
-            return
-            
-        # 백엔드 버퍼 전체를 던지지 않고, 오직 체크박스가 살아있는 정제 데이터만 필터링
-        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
-        if not selected_only:
-            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
-            return
-            
+        if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", "", "CSV Files (*.csv)")
-        if path: 
-            export_to_csv(path, selected_only)
-            QMessageBox.information(self, "Export Success", f"Successfully exported {len(selected_only)} active passes to CSV.")
+        if path: export_to_csv(path, self.main_app.calculated_passes)
 
     def click_export_yaml(self):
-        """🔥 [버그 영구 박멸] 고스트 킹세종 더미 데이터 유입을 차단하고, 체크된 유효 타임라인만 YAML 빌드"""
-        if not self.main_app.calculated_passes: 
-            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
-            return
-            
-        # 오직 체크가 유효한 행들만 추출하여 누적 고스트 버퍼 원천 봉쇄
-        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
-        if not selected_only:
-            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
-            return
-            
+        if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", "", "YAML Files (*.yaml)")
-        if path: 
-            export_to_yaml(path, selected_only)
-            QMessageBox.information(self, "Export Success", f"Successfully compiled {len(selected_only)} active passes to YAML.")
-
-    def click_export_excel(self):
-        """🎨 [색상 동기화 통합형] 오직 선택된 행들만 필터링하여 이쁜 파스텔톤 엑셀 레이어 덤프"""
-        if not self.main_app.calculated_passes: 
-            QMessageBox.warning(self, "Warning", "No calculated passes available to export.")
-            return
-            
-        selected_only = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
-        if not selected_only:
-            QMessageBox.warning(self, "Warning", "No passes are currently selected in the timeline.")
-            return
-            
-        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
-        if path:
-            try:
-                export_to_excel_with_color(path, selected_only)
-                QMessageBox.information(self, "Export Success", f"Successfully generated colorized spreadsheet for {len(selected_only)} passes!")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
+        if path: export_to_yaml(path, self.main_app.calculated_passes)
 
     def set_all_checkboxes(self, check_state):
         if not self.main_app.calculated_passes:
@@ -330,4 +300,17 @@ class PassPredictTab(QWidget):
                 item.setCheckState(target_state)
                 self.main_app.calculated_passes[r]['selected'] = check_state
         self.main_app.is_populating = False
-        self.populate_table()    
+        self.populate_table()
+
+    def click_export_excel(self):
+        if not self.main_app.calculated_passes: return
+        if not any(p['selected'] for p in self.main_app.calculated_passes):
+            QMessageBox.warning(self, "Warning", "No passes are selected.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
+        if path:
+            try:
+                export_to_excel_with_color(path, self.main_app.calculated_passes)
+                QMessageBox.information(self, "Export Success", "Excel file generated successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
