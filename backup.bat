@@ -1,25 +1,35 @@
 @echo off
-:: 터미널 한글 깨짐 방지를 위해 UTF-8 인코딩 코드로 변경
 chcp 65001 > nul
+setlocal enabledelayedexpansion
 
-echo =========================================
-echo  [Vibe Coding] 깃허브 자동 백업 시작...
-echo =========================================
+:: 1. 사용자 지정 커밋 메시지가 입력되었는지 확인 (%*는 뒤에 온 모든 텍스트)
+set "USER_MSG=%~1"
 
-:: 1. 기본 브랜치 이름을 안전하게 main으로 통일
-git branch -M main
+:: 2. 만약 입력된 메시지가 없다면 기본 자동 메시지 생성
+if "%USER_MSG%"=="" (
+    :: 현재 날짜와 시간 추출 (YYYY-MM-DD HH:MM)
+    set "CURR_DATE=%date:~0,10%"
+    set "CURR_TIME=%time:~0,5%"
+    set "COMMIT_MSG=Auto backup: !CURR_DATE! !CURR_TIME! - Scheduled System Snapshot"
+) else (
+    set "COMMIT_MSG=%~1"
+)
 
-:: 2. 변경된 모든 코드 파일 선택
+echo.
+echo ========================================================
+echo 🚀 GitHub 원격 저장소 백업을 시작합니다...
+echo 📝 Commit Message: "!COMMIT_MSG!"
+echo ========================================================
+echo.
+
+:: 3. Git 커밋 및 푸시 실행
 git add .
-
-:: 3. 현재 날짜와 시간으로 스탬프(커밋) 찍기
-set current_time=%date%_%time%
-git commit -m "Auto backup: %current_time%"
-
-:: 4. 깃허브 저장소로 전송
+git commit -m "!COMMIT_MSG!"
 git push origin main
 
-echo =========================================
-echo  백업 완료! 코드가 안전하게 저장되었습니다.
-echo =========================================
+echo.
+echo ========================================================
+echo 🎉 백업이 성공적으로 완료되었습니다!
+echo ========================================================
+echo.
 pause
