@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QColor, QDesktopServices
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
@@ -26,32 +26,54 @@ class PassPredictTab(QWidget):
         layout = QHBoxLayout(self)
         left_panel = QVBoxLayout()
         
+        # -------------------------------------------------------------
+        # 1. Detected TLE Files 구역
+        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>1. Detected TLE Files:</b>"))
         self.tle_file_list = QListWidget()
         self.tle_file_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         left_panel.addWidget(self.tle_file_list)
         
         tle_btn_layout = QHBoxLayout()
-        self.btn_refresh_tle = QPushButton("Refresh Folder")
+        self.btn_refresh_tle = QPushButton("Refresh")
         self.btn_refresh_tle.clicked.connect(self.refresh_tle_files)
         tle_btn_layout.addWidget(self.btn_refresh_tle)
         
-        self.btn_fetch_tle = QPushButton("🌐 Fetch Online TLE")
+        # 🔥 [신규 추가]: TLE 폴더 직접 열기 버튼
+        self.btn_open_tle_folder = QPushButton("📂 Open Folder")
+        self.btn_open_tle_folder.clicked.connect(lambda: self.open_local_folder(self.tle_dir))
+        tle_btn_layout.addWidget(self.btn_open_tle_folder)
+        
+        self.btn_fetch_tle = QPushButton("🌐 Fetch Online")
         self.btn_fetch_tle.setStyleSheet("font-weight: bold; color: #0D47A1;")
         self.btn_fetch_tle.clicked.connect(self.click_fetch_online_tle)
         tle_btn_layout.addWidget(self.btn_fetch_tle)
         
         left_panel.addLayout(tle_btn_layout)
         
+        # -------------------------------------------------------------
+        # 2. Detected Ground Stations 구역
+        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>2. Detected Ground Stations:</b>"))
         self.gs_list = QListWidget()
         self.gs_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
         left_panel.addWidget(self.gs_list)
         
-        self.btn_refresh_gs = QPushButton("Refresh Stations Folder")
+        gs_btn_layout = QHBoxLayout()
+        self.btn_refresh_gs = QPushButton("Refresh")
         self.btn_refresh_gs.clicked.connect(self.refresh_stations)
-        left_panel.addWidget(self.btn_refresh_gs)
+        gs_btn_layout.addWidget(self.btn_refresh_gs)
         
+        # 🔥 [신규 추가]: Ground Station 폴더 직접 열기 버튼
+        self.btn_open_gs_folder = QPushButton("📂 Open Folder")
+        self.btn_open_gs_folder.clicked.connect(lambda: self.open_local_folder(self.stations_dir))
+        gs_btn_layout.addWidget(self.btn_open_gs_folder)
+        
+        left_panel.addLayout(gs_btn_layout)
+        
+        # -------------------------------------------------------------
+        # 3. Time Window (UTC) 구역
+        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -65,6 +87,9 @@ class PassPredictTab(QWidget):
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
+        # -------------------------------------------------------------
+        # 4. Filters 구역
+        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>4. Filters:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
@@ -97,6 +122,9 @@ class PassPredictTab(QWidget):
         
         layout.addLayout(left_panel, stretch=1)
         
+        # -------------------------------------------------------------
+        # 오른쪽 매트릭스 테이블 구역
+        # -------------------------------------------------------------
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
@@ -141,6 +169,14 @@ class PassPredictTab(QWidget):
         right_panel.addLayout(btn_layout)
         layout.addLayout(right_panel, stretch=3)
 
+    def open_local_folder(self, folder_path):
+        """🔥 [신규 핸들러]: 지정된 로컬 폴더를 시스템 기본 탐색기로 엽니다."""
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path) # 폴더가 없으면 자동 생성 후 열기
+        
+        abs_path = os.path.abspath(folder_path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+
     def refresh_tle_files(self):
         self.tle_file_list.clear()
         parse_tle_from_dir(self.tle_dir)
@@ -152,7 +188,6 @@ class PassPredictTab(QWidget):
             self.tle_file_list.item(i).setSelected(True)
 
     def click_fetch_online_tle(self):
-        """🔥 [2단계 릴레이]: 1단계 키워드 검색 ➡️ 2단계 결과 목록 대화상자에서 선택 및 다운로드"""
         query, ok = QInputDialog.getText(
             self, 
             "CelesTrak Satellite Search", 
@@ -161,7 +196,6 @@ class PassPredictTab(QWidget):
         if not ok or not query.strip():
             return
 
-        # 1. CelesTrak 검색 목록 조회
         success, sat_list, msg = search_satellites_from_celestrak(query)
         if not success or not sat_list:
             QMessageBox.warning(
@@ -171,7 +205,6 @@ class PassPredictTab(QWidget):
             )
             return
 
-        # 2. 검색 결과를 리스트로 보여주고 사용자가 콕 집어 선택할 수 있는 다이얼로그 팝업 생성
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Select Satellite to Fetch ({len(sat_list)} found)")
         dialog.resize(450, 320)
@@ -183,11 +216,10 @@ class PassPredictTab(QWidget):
         for sat in sat_list:
             display_text = f"🛰️  {sat['sat_name']}  |  NORAD ID: {sat['norad_id']}  ({sat['int_designator']})"
             item = QListWidgetItem(display_text)
-            # 숨은 데이터로 노라드 아이디와 위성명 저장
             item.setData(Qt.ItemDataRole.UserRole, sat)
             list_widget.addItem(item)
             
-        list_widget.setCurrentRow(0) # 첫번째 항목 기본 선택
+        list_widget.setCurrentRow(0)
         dlg_layout.addWidget(list_widget)
         
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -195,7 +227,6 @@ class PassPredictTab(QWidget):
         button_box.rejected.connect(dialog.reject)
         dlg_layout.addWidget(button_box)
         
-        # 3. 사용자가 위성을 클릭하고 OK 누르면 해당 위성만 다이렉트 다운로드
         if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_item = list_widget.currentItem()
             if not selected_item: return
