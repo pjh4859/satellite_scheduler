@@ -68,6 +68,7 @@ def search_satellites_from_celestrak(search_query: str) -> tuple[bool, list, str
 def download_tle_by_norad_id(norad_id: str, file_prefix: str = "", save_dir: str = "tle") -> tuple[bool, str]:
     """
     선택된 위성의 NORAD Catalog ID를 기반으로 최종 TLE 파일(.tle)을 다운로드하여 저장합니다.
+    - 파일명 규칙: 위성이름.tle (예: NEONSAT-1A.tle, SPACEEYE-T1.tle)
     """
     url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
     req = urllib.request.Request(
@@ -85,10 +86,10 @@ def download_tle_by_norad_id(norad_id: str, file_prefix: str = "", save_dir: str
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
 
-                # 파일명 생성: 위성명_NORADID.tle 구조로 정갈하게 저장
+                # 파일명 생성: 뒤의 NORAD ID 숫자 조합을 붙이지 않고 순수 위성이름.tle 형태로만 저장
                 clean_prefix = "".join([c for c in file_prefix if c.isalnum() or c in ('-', '_')]).strip().upper()
                 if clean_prefix:
-                    filename = f"{clean_prefix}_{norad_id}.tle"
+                    filename = f"{clean_prefix}.tle"
                 else:
                     filename = f"SAT_{norad_id}.tle"
                     

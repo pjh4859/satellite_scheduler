@@ -2,29 +2,26 @@ import os
 import yaml
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QLabel, QFileDialog, 
-                             QHeaderView, QMessageBox, QRadioButton, QButtonGroup)
+                             QHeaderView, QMessageBox, QRadioButton, QButtonGroup, QSpinBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 from core.color_manager import color_manager
 from core.exporter import export_final_schedule_to_csv, export_final_schedule_to_excel
+from core.plan_parser import normalize_sat_name
 
 class FinalSchedulerTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
         self.plans_dir = "plans"
-        
         self.raw_pass_data = None
         self.raw_constraint_data = None
         self.final_schedule_data = []
-        
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        
-        # 1. 상단 컨트롤 바
         top_ctrl = QHBoxLayout()
         
         self.btn_load_pass = QPushButton("📂 Load Tab1 Passes (.yaml)")
@@ -37,7 +34,15 @@ class FinalSchedulerTab(QWidget):
         self.btn_load_constraints.clicked.connect(self.click_load_constraints_yaml)
         top_ctrl.addWidget(self.btn_load_constraints)
         
-        self.lbl_status = QLabel("❌ Files Missing (Please load Pass & Constraints)")
+        top_ctrl.addSpacing(15)
+        top_ctrl.addWidget(QLabel("<b>Max Step Lead:</b>"))
+        self.spin_max_lead = QSpinBox()
+        self.spin_max_lead.setRange(1, 20)
+        self.spin_max_lead.setValue(6)
+        self.spin_max_lead.setToolTip("Maximum allowed step difference between satellites")
+        top_ctrl.addWidget(self.spin_max_lead)
+        
+        self.lbl_status = QLabel("❌ Files Missing")
         self.lbl_status.setStyleSheet("color: #D32F2F; font-weight: bold; margin-left: 10px; margin-right: 10px;")
         top_ctrl.addWidget(self.lbl_status)
         
@@ -49,9 +54,8 @@ class FinalSchedulerTab(QWidget):
         
         top_ctrl.addSpacing(20)
         top_ctrl.addWidget(QLabel("<b>🎨 Color Mode:</b>"))
-        
         self.color_group = QButtonGroup(self)
-        self.radio_station = QRadioButton("Station Standard (Default)")
+        self.radio_station = QRadioButton("Station Standard")
         self.radio_station.setChecked(True)
         self.radio_station.toggled.connect(self.refresh_table_colors)
         self.color_group.addButton(self.radio_station)
@@ -65,8 +69,6 @@ class FinalSchedulerTab(QWidget):
         top_ctrl.addStretch()
         layout.addLayout(top_ctrl)
         
-        # 2. 메인 마스터 타임라인 그리드 배치
-        # 🔥 [요구사항 반영]: Select 열을 완벽히 빼고 총 9개 정갈한 컬럼으로 리밸런싱
         self.final_table = QTableWidget()
         self.final_table.setColumnCount(9)
         self.final_table.setHorizontalHeaderLabels([
@@ -79,10 +81,8 @@ class FinalSchedulerTab(QWidget):
         self.final_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.final_table)
         
-        # 3. 하단 덤프 내보내기 제어 바
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Export Options:</b>"))
-        
         self.btn_export_csv = QPushButton("Export Final Schedule to CSV")
         self.btn_export_csv.clicked.connect(self.click_export_csv)
         bottom_ctrl.addWidget(self.btn_export_csv)
@@ -113,7 +113,6 @@ class FinalSchedulerTab(QWidget):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f) or {}
-            # YAML의 루트 구조 및 래핑 구조('constraints' 또는 'mission_constraints') 모두 유연하게 대응
             if isinstance(content, list):
                 self.raw_constraint_data = content
             else:
@@ -130,70 +129,184 @@ class FinalSchedulerTab(QWidget):
             self.lbl_status.setStyleSheet("color: #2E7D32; font-weight: bold; margin-left: 10px; margin-right: 10px;")
             self.btn_generate_final.setEnabled(True)
         else:
-            self.lbl_status.setText("❌ Files Missing (Please load Pass & Constraints)")
+            self.lbl_status.setText("❌ Files Missing")
             self.lbl_status.setStyleSheet("color: #D32F2F; font-weight: bold; margin-left: 10px; margin-right: 10px;")
             self.btn_generate_final.setEnabled(False)
 
     def click_generate_schedule(self):
-        """🔥 [위성 타깃형 순차 슬라이딩 할당 엔진]: 완전 일치(Exact match) 조건으로 위성 파이프라인 분리"""
+        """🚀 Sequence_ID 및 Pre_Req_Main 제약 기반 정밀 병렬 할당 연산기"""
         if not self.raw_pass_data or self.raw_constraint_data is None:
             return
             
         try:
             self.final_schedule_data = []
-            sat_match_pointers = {}
+            max_lead_steps = self.spin_max_lead.value()
             
-            for p in self.raw_pass_data:
+            # 지상국 능력 매핑
+            station_configs = getattr(self.main_app, 'station_data', [])
+            st_caps = {}
+            for st in station_configs:
+                st_name = st[0]
+                is_down = (st[3].upper() == 'Y') if len(st) > 3 else True
+                is_cmd = (st[4].upper() == 'Y') if len(st) > 4 else True
+                st_caps[st_name] = {'cmd': is_cmd, 'down': is_down}
+
+            # 위성별 플랜 분류 및 Sequence_ID 기준 오름차순 정렬
+            sat_plans = {}
+            for act in self.raw_constraint_data:
+                raw_sat = act.get("sat_id", act.get("satellite", ""))
+                norm_sat = normalize_sat_name(raw_sat)
+                if not norm_sat: continue
+                
+                if norm_sat not in sat_plans:
+                    sat_plans[norm_sat] = []
+                    
+                main_title = str(act.get("main", act.get("activity", ""))).strip()
+                sub_title = str(act.get("sub", "")).strip()
+                
+                try: seq_id = int(act.get("sequence_id", act.get("activity_sequence_id", 999)))
+                except: seq_id = 999
+                
+                try: min_el = float(act.get("min_el", 0.0))
+                except: min_el = 0.0
+                
+                try: min_dur = float(act.get("min_dur", act.get("min_pass_contact", 0.0)))
+                except: min_dur = 0.0
+                
+                req_cap = str(act.get("req_cap", act.get("x_band_req", "NONE"))).strip().upper()
+                if req_cap == 'Y': req_cap = 'DOWN'
+                elif req_cap == 'N': req_cap = 'NONE'
+
+                pre_req = str(act.get("pre_req_main", act.get("pre_activity_sequence_id", "NONE"))).strip()
+
+                sat_plans[norm_sat].append({
+                    "main": main_title,
+                    "sub": sub_title,
+                    "sequence_id": seq_id,
+                    "min_el": min_el,
+                    "min_dur": min_dur,
+                    "req_cap": req_cap,
+                    "pre_req_main": pre_req
+                })
+
+            # 위성별 Sequence_ID 정렬
+            for norm_sat in sat_plans:
+                sat_plans[norm_sat].sort(key=lambda x: x["sequence_id"])
+
+            # 진도 상태 및 완료된 Main 미션 추적
+            sat_progress = {norm_sat: 0 for norm_sat in sat_plans.keys()}
+            sat_completed_mains = {norm_sat: set() for norm_sat in sat_plans.keys()}
+
+            # 패스 시간순 정렬 탐색
+            sorted_passes = sorted(self.raw_pass_data, key=lambda x: x.get('aos', ''))
+
+            for p in sorted_passes:
                 p_sat_full = p.get("satellite", "")
-                # 예: "NEONSAT1(67614)" 또는 "NEONSAT1A(67615)" -> 괄호 떼고 순수 대문자 추출
-                p_sat_clean = p_sat_full.split("(")[0].strip().upper()
+                p_sat_norm = normalize_sat_name(p_sat_full)
+                st_name = p.get("station", "").split("(")[0].strip()
                 
-                # 2번 탭 데이터에서 현재 패스의 위성 이름과 '정확하게 일치'하는 항목들만 순서대로 추출
-                matched_sat_activities = []
-                for act in self.raw_constraint_data:
-                    act_sat = act.get("satellite", "").strip().upper()
-                    
-                    # ❌ [기존 버그 코드]: if act_sat in p_sat_clean or p_sat_clean in act_sat:
-                    # 💡 [정밀 교정]: 문자열이 완벽하게 글자 수까지 일치할 때만 동종 위성으로 판정!
-                    if act_sat == p_sat_clean:
-                        matched_sat_activities.append(act)
-                        
-                if p_sat_clean not in sat_match_pointers:
-                    sat_match_pointers[p_sat_clean] = 0
-                    
-                curr_pointer = sat_match_pointers[p_sat_clean]
-                
-                if curr_pointer < len(matched_sat_activities):
-                    target_act = matched_sat_activities[curr_pointer]
-                    assigned_activity_text = target_act.get("activity", target_act.get("act_name", "N/A"))
-                    sat_match_pointers[p_sat_clean] += 1
+                p_dur = float(p.get("duration_sec", p.get("duration", 0)))
+                p_el = float(p.get("max_elevation_deg", p.get("max_el", 0)))
+                st_info = st_caps.get(st_name, {'cmd': True, 'down': True})
+
+                if p_sat_norm not in sat_plans:
+                    self.final_schedule_data.append({
+                        "station": p.get("station", ""),
+                        "satellite": p_sat_full,
+                        "pass_no": f"Pass {p.get('pass_no', '')}",
+                        "aos": p.get("aos", ""),
+                        "los": p.get("los", ""),
+                        "duration": p_dur,
+                        "max_el": p_el,
+                        "status": p.get("status", "Normal"),
+                        "activity": "N/A (No Plan)"
+                    })
+                    continue
+
+                curr_step = sat_progress[p_sat_norm]
+                plan_list = sat_plans[p_sat_norm]
+
+                if curr_step >= len(plan_list):
+                    self.final_schedule_data.append({
+                        "station": p.get("station", ""),
+                        "satellite": p_sat_full,
+                        "pass_no": f"Pass {p.get('pass_no', '')}",
+                        "aos": p.get("aos", ""),
+                        "los": p.get("los", ""),
+                        "duration": p_dur,
+                        "max_el": p_el,
+                        "status": "Idle",
+                        "activity": "Standby / Idle Operations"
+                    })
+                    continue
+
+                next_task = plan_list[curr_step]
+                reject_reasons = []
+
+                # [제약 1] 최소 고도각 검사
+                if p_el < next_task["min_el"]:
+                    reject_reasons.append(f"El Low ({p_el}° < {next_task['min_el']}°)")
+
+                # [제약 2] 최소 contact 시간 검사
+                if p_dur < next_task["min_dur"]:
+                    reject_reasons.append(f"Dur Short ({p_dur}s < {next_task['min_dur']}s)")
+
+                # [제약 3] 지상국 능력 검사
+                req = next_task["req_cap"]
+                if req == 'CMD' and not st_info['cmd']:
+                    reject_reasons.append(f"GS {st_name} No CMD")
+                elif req == 'DOWN' and not st_info['down']:
+                    reject_reasons.append(f"GS {st_name} No DOWN")
+                elif req == 'BOTH' and not (st_info['cmd'] and st_info['down']):
+                    reject_reasons.append(f"GS {st_name} No BOTH")
+
+                # [제약 4] Pre_Req_Main 선행 완료 여부 검사
+                pre_req = next_task["pre_req_main"].strip().upper()
+                completed_upper = {m.upper() for m in sat_completed_mains[p_sat_norm]}
+                if pre_req not in ["NONE", "NULL", ""] and pre_req not in completed_upper:
+                    reject_reasons.append(f"Pre-req '{next_task['pre_req_main']}' Not Met")
+
+                # [제약 5] Step Lock (위성 간 진도 격차 제한)
+                min_other_prog = min(sat_progress.values()) if sat_progress else 0
+                if ((curr_step + 1) - min_other_prog) > max_lead_steps:
+                    reject_reasons.append(f"Step Lock (Lead > {max_lead_steps})")
+
+                # -------------------------------------------------------------
+                # 최종 판정
+                # -------------------------------------------------------------
+                if not reject_reasons:
+                    sub_str = f" ({next_task['sub']})" if next_task['sub'] else ""
+                    assigned_text = f"[{next_task['sequence_id']}] {next_task['main']}{sub_str}"
+                    status_text = "Allocated"
+                    sat_progress[p_sat_norm] += 1
+                    sat_completed_mains[p_sat_norm].add(next_task["main"])
                 else:
-                    assigned_activity_text = "Standby / Idle Operations"
-                
+                    assigned_text = f"[{next_task['main']}] Blocked ({', '.join(reject_reasons)})"
+                    status_text = "Bypassed"
+
                 self.final_schedule_data.append({
                     "station": p.get("station", ""),
                     "satellite": p_sat_full,
                     "pass_no": f"Pass {p.get('pass_no', '')}",
                     "aos": p.get("aos", ""),
                     "los": p.get("los", ""),
-                    "duration": p.get("duration_sec", p.get("duration", "0")),
-                    "max_el": p.get("max_elevation_deg", p.get("max_el", "0")),
-                    "status": p.get("status", "Normal"),
-                    "activity": assigned_activity_text
+                    "duration": p_dur,
+                    "max_el": p_el,
+                    "status": status_text,
+                    "activity": assigned_text
                 })
-            
+
             self.populate_final_table_ui()
-            QMessageBox.information(self, "Allocation Success", f"Successfully completed schedule synthesis with exact satellite matching.")
+            QMessageBox.information(self, "Allocation Success", "Successfully compiled LEOP schedule with Sequence_ID and Pre_Req constraints.")
             
         except Exception as e:
-            QMessageBox.critical(self, "Engine Error", f"Failed to execute satellite sequential merge:\n{str(e)}")
+            QMessageBox.critical(self, "Engine Error", f"Failed to execute LEOP schedule:\n{str(e)}")
 
     def populate_final_table_ui(self):
         self.final_table.setRowCount(0)
         self.final_table.setRowCount(len(self.final_schedule_data))
         
         for row_idx, item in enumerate(self.final_schedule_data):
-            # Select 체크박스 없이 0번부터 순수 데이터 컬럼 주입 시작
             self.final_table.setItem(row_idx, 0, QTableWidgetItem(item["station"]))
             self.final_table.setItem(row_idx, 1, QTableWidgetItem(item["satellite"]))
             self.final_table.setItem(row_idx, 2, QTableWidgetItem(item["pass_no"]))
@@ -202,7 +315,7 @@ class FinalSchedulerTab(QWidget):
             self.final_table.setItem(row_idx, 5, QTableWidgetItem(str(item["duration"])))
             self.final_table.setItem(row_idx, 6, QTableWidgetItem(str(item["max_el"])))
             self.final_table.setItem(row_idx, 7, QTableWidgetItem(item["status"]))
-            self.final_table.setItem(row_idx, 8, QTableWidgetItem(item["activity"])) # 미션 액티비티 항목 상주
+            self.final_table.setItem(row_idx, 8, QTableWidgetItem(item["activity"]))
             
         self.refresh_table_colors()
 
@@ -213,17 +326,21 @@ class FinalSchedulerTab(QWidget):
         is_station_mode = self.radio_station.isChecked()
         
         for r in range(row_count):
-            if is_station_mode:
-                st_name = self.final_table.item(r, 0).text().strip()
-                _, chosen_color = color_manager.get_station_colors(st_name)
+            status_text = self.final_table.item(r, 7).text().strip()
+            
+            if status_text == "Bypassed":
+                chosen_color = QColor(255, 235, 235)
             else:
-                sat_raw = self.final_table.item(r, 1).text().split("(")[0].strip()
-                _, chosen_color = color_manager.get_colors(sat_raw)
+                if is_station_mode:
+                    st_name = self.final_table.item(r, 0).text().strip()
+                    _, chosen_color = color_manager.get_station_colors(st_name)
+                else:
+                    sat_raw = self.final_table.item(r, 1).text().split("(")[0].strip()
+                    _, chosen_color = color_manager.get_colors(sat_raw)
                 
             for c in range(self.final_table.columnCount()):
                 cell = self.final_table.item(r, c)
-                if cell:
-                    cell.setBackground(chosen_color)
+                if cell: cell.setBackground(chosen_color)
 
     def click_export_csv(self):
         if not self.final_schedule_data: return

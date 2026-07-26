@@ -1,0 +1,11 @@
+Satellite,Activity,Activity Sequence ID,Pre Activity Sequence ID,최소 pass contact 시간,X-Band 여부,Priority
+NEONSAT1,First Contact,101,None,300,N,High
+NEONSAT1,Health check,102,101,180,N,High
+NEONSAT1,Configuration check,103,102,180,N,Medium
+NEONSAT1,X-band Key update,104,103,120,Y,Medium
+NEONSAT1,1차 지상 촬영,105,104,400,Y,High
+NEONSAT-1A,First Contact,201,None,300,N,High
+NEONSAT-1A,Health check,202,201,180,N,High
+NEONSAT-1A,Configuration check,203,202,180,N,Medium
+NEONSAT-1A,X-band Key update,204,203,120,Y,Medium
+NEONSAT-1A,1차 지상 촬영,205,204,400,Y,High

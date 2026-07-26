@@ -3,7 +3,11 @@ from datetime import datetime, timezone, timedelta
 from skyfield.api import load, wgs84, EarthSatellite
 
 def parse_tle_from_dir(tle_dir, selected_files=None):
-    """tle/ 폴더 내부에서 선택된 TLE 파일만 읽어 파싱합니다."""
+    """
+    tle/ 폴더 내부에서 TLE 파일들을 읽어 파싱합니다.
+    3-Line (Header + Line1 + Line2) 및 2-Line (Line1 + Line2) 모두 대응하며,
+    Line1[2:7]에서 순수 NORAD ID(위성 번호)를 정확히 추출합니다.
+    """
     satellites = {}
     if not os.path.exists(tle_dir):
         os.makedirs(tle_dir)
@@ -19,19 +23,35 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
             file_path = os.path.join(tle_dir, filename)
             with open(file_path, "r", encoding="utf-8") as f:
                 lines = [line.strip() for line in f.readlines() if line.strip()]
+                
             idx = 0
             while idx < len(lines):
+                # Line 1과 Line 2의 위치 탐색
                 if lines[idx].startswith("1 ") and (idx + 1) < len(lines) and lines[idx+1].startswith("2 "):
                     line1 = lines[idx]
                     line2 = lines[idx+1]
-                    sat_id = line1[2:7].strip()
-                    sat_name = f"SAT_{sat_id}"
+                    
+                    # Line 1의 3번째~7번째 글자에서 5자리 NORAD ID(위성 번호) 추출
+                    norad_id = line1[2:7].strip()
+                    
+                    # Line 1 바로 앞줄에 위성 이름(Header)이 존재하는지 확인
+                    sat_name = None
                     if idx > 0 and not lines[idx-1].startswith("1 ") and not lines[idx-1].startswith("2 "):
-                        sat_name = lines[idx-1]
-                    satellites[sat_name] = (line1, line2)
+                        sat_name = lines[idx-1].strip()
+                    else:
+                        # Header가 없는 2-line 형태일 경우 파일명에서 추출
+                        sat_name = os.path.splitext(filename)[0].strip()
+                        
+                    # 딕셔너리 Key 및 데이터 저장 (위성 이름과 5자리 위성 번호 분리 명시)
+                    satellites[sat_name] = {
+                        'lines': (line1, line2),
+                        'norad_id': norad_id,
+                        'sat_name': sat_name
+                    }
                     idx += 2
                 else:
                     idx += 1
+                    
     return satellites
 
 def parse_stations_from_dir(stations_dir):
@@ -70,7 +90,6 @@ def parse_stations_from_dir(stations_dir):
                             continue
     return stations_list
 
-# 🔥 [시작 패스 번호 연동 추가]: start_pass_no 파라미터를 받아 카운팅의 초기 기준을 오프셋 적용
 def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
     """시간 윈도우 내에서 위성이 북극점(최고 위도)을 통과하는 시점들을 추적해 궤도 카운트를 생성합니다."""
     orbit_starts = []
@@ -81,7 +100,6 @@ def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
     is_ascending = True
     step = timedelta(seconds=60)
     
-    # 💡 유저가 오프셋으로 지정한 start_pass_no부터 궤도 카운팅을 연쇄 시작하도록 정밀 연결!
     orbit_counter = start_pass_no
     orbit_starts.append((orbit_counter, start_dt))
     
@@ -106,7 +124,6 @@ def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
             return orbit_no
     return default_start_pass
 
-# 🔥 [시작 패스 번호 파라미터 추가]: 기본값 1 세팅
 def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, start_pass_no=1):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
@@ -124,13 +141,21 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     stations = {cfg[0]: wgs84.latlon(cfg[1], cfg[2]) for cfg in station_configs}
     raw_passes = []
     
-    for sat_name, lines in tle_data.items():
+    for sat_key, sat_info in tle_data.items():
+        if isinstance(sat_info, dict):
+            lines = sat_info['lines']
+            norad_id = sat_info['norad_id']
+            sat_name = sat_info['sat_name']
+        else:
+            lines = sat_info
+            norad_id = lines[0][2:7].strip()
+            sat_name = sat_key
+            
         try:
             satellite = EarthSatellite(lines[0], lines[1], sat_name, ts)
         except Exception:
             continue
             
-        # 💡 북극점 궤도 연산기에 start_pass_no 전달
         orbit_timeline = find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=start_pass_no)
             
         for gs_name, gs_loc in stations.items():
@@ -150,7 +175,7 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                     if duration >= min_dur:
                         pass_no = get_orbit_number(current_pass['aos'], orbit_timeline, default_start_pass=start_pass_no)
                         raw_passes.append({
-                            'satellite': sat_name,
+                            'satellite': f"{sat_name}({norad_id})",
                             'station': gs_name,
                             'aos': current_pass['aos'],
                             'los': current_pass['los'],

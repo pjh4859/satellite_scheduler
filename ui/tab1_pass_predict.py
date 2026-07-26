@@ -26,9 +26,7 @@ class PassPredictTab(QWidget):
         layout = QHBoxLayout(self)
         left_panel = QVBoxLayout()
         
-        # -------------------------------------------------------------
         # 1. Detected TLE Files 구역
-        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>1. Detected TLE Files:</b>"))
         self.tle_file_list = QListWidget()
         self.tle_file_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -39,7 +37,6 @@ class PassPredictTab(QWidget):
         self.btn_refresh_tle.clicked.connect(self.refresh_tle_files)
         tle_btn_layout.addWidget(self.btn_refresh_tle)
         
-        # 🔥 [신규 추가]: TLE 폴더 직접 열기 버튼
         self.btn_open_tle_folder = QPushButton("📂 Open Folder")
         self.btn_open_tle_folder.clicked.connect(lambda: self.open_local_folder(self.tle_dir))
         tle_btn_layout.addWidget(self.btn_open_tle_folder)
@@ -51,9 +48,7 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(tle_btn_layout)
         
-        # -------------------------------------------------------------
         # 2. Detected Ground Stations 구역
-        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>2. Detected Ground Stations:</b>"))
         self.gs_list = QListWidget()
         self.gs_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -64,16 +59,13 @@ class PassPredictTab(QWidget):
         self.btn_refresh_gs.clicked.connect(self.refresh_stations)
         gs_btn_layout.addWidget(self.btn_refresh_gs)
         
-        # 🔥 [신규 추가]: Ground Station 폴더 직접 열기 버튼
         self.btn_open_gs_folder = QPushButton("📂 Open Folder")
         self.btn_open_gs_folder.clicked.connect(lambda: self.open_local_folder(self.stations_dir))
         gs_btn_layout.addWidget(self.btn_open_gs_folder)
         
         left_panel.addLayout(gs_btn_layout)
         
-        # -------------------------------------------------------------
         # 3. Time Window (UTC) 구역
-        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -87,9 +79,7 @@ class PassPredictTab(QWidget):
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
-        # -------------------------------------------------------------
         # 4. Filters 구역
-        # -------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>4. Filters:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
@@ -122,9 +112,7 @@ class PassPredictTab(QWidget):
         
         layout.addLayout(left_panel, stretch=1)
         
-        # -------------------------------------------------------------
         # 오른쪽 매트릭스 테이블 구역
-        # -------------------------------------------------------------
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
@@ -170,10 +158,8 @@ class PassPredictTab(QWidget):
         layout.addLayout(right_panel, stretch=3)
 
     def open_local_folder(self, folder_path):
-        """🔥 [신규 핸들러]: 지정된 로컬 폴더를 시스템 기본 탐색기로 엽니다."""
         if not os.path.exists(folder_path):
-            os.makedirs(folder_path) # 폴더가 없으면 자동 생성 후 열기
-        
+            os.makedirs(folder_path)
         abs_path = os.path.abspath(folder_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
@@ -198,11 +184,7 @@ class PassPredictTab(QWidget):
 
         success, sat_list, msg = search_satellites_from_celestrak(query)
         if not success or not sat_list:
-            QMessageBox.warning(
-                self, 
-                "Search Failed", 
-                f"Search results for '{query}':\n{msg}\n\n(No changes were made.)"
-            )
+            QMessageBox.warning(self, "Search Failed", f"Search results for '{query}':\n{msg}\n\n(No changes were made.)")
             return
 
         dialog = QDialog(self)
@@ -238,11 +220,7 @@ class PassPredictTab(QWidget):
             dl_success, save_path = download_tle_by_norad_id(target_norad_id, target_sat_name, self.tle_dir)
             
             if dl_success:
-                QMessageBox.information(
-                    self, 
-                    "Download Complete", 
-                    f"Successfully fetched TLE for:\n[{target_sat_name}]\n\nSaved as:\n{save_path}"
-                )
+                QMessageBox.information(self, "Download Complete", f"Successfully fetched TLE for:\n[{target_sat_name}]\n\nSaved as:\n{save_path}")
                 self.refresh_tle_files()
             else:
                 QMessageBox.critical(self, "Download Error", f"Failed to fetch TLE:\n{save_path}")
@@ -289,24 +267,37 @@ class PassPredictTab(QWidget):
         self.main_app.is_populating = True
         
         try:
-            tle_dir = "tle"
+            # 🔥 [위성 이름(위성 번호) 표출 보장 로직]
             for p in self.main_app.calculated_passes:
                 sat_key = p['satellite']
-                if "(" not in sat_key:
-                    clean_id = sat_key.replace("SAT_", "").strip()
-                    pure_file_name = sat_key
-                    if os.path.exists(tle_dir):
-                        for filename in os.listdir(tle_dir):
-                            if filename.endswith(".tle") or filename.endswith(".txt"):
-                                try:
-                                    with open(os.path.join(tle_dir, filename), "r", encoding="utf-8") as f:
-                                        content = f.read()
-                                    if clean_id in content:
-                                        pure_file_name = os.path.splitext(filename)[0]
+                
+                # 이미 'NEONSAT-1A(67614)' 형태로 괄호와 NORAD ID가 완비된 경우 유지
+                if "(" in sat_key and ")" in sat_key:
+                    continue
+                
+                # 괄호가 없을 경우 'SAT_67614' 형태에서 NORAD ID 추출
+                norad_id = sat_key.replace("SAT_", "").strip()
+                sat_name = sat_key
+                
+                # TLE 파일 내 1번째 줄(헤더/위성 이름)을 직접 스캔하여 정확한 위성 이름 획득
+                if os.path.exists(self.tle_dir):
+                    for filename in os.listdir(self.tle_dir):
+                        if filename.endswith(".tle") or filename.endswith(".txt"):
+                            try:
+                                with open(os.path.join(self.tle_dir, filename), "r", encoding="utf-8") as f:
+                                    lines = [line.strip() for line in f if line.strip()]
+                                for idx, line in enumerate(lines):
+                                    if line.startswith("1 ") and norad_id in line:
+                                        if idx > 0 and not lines[idx-1].startswith("1 ") and not lines[idx-1].startswith("2 "):
+                                            sat_name = lines[idx-1]
+                                        else:
+                                            # 파일명 기반 위성 이름 추출
+                                            sat_name = os.path.splitext(filename)[0]
                                         break
-                                except:
-                                    continue
-                    p['satellite'] = f"{pure_file_name}({clean_id})"
+                            except:
+                                continue
+                                
+                p['satellite'] = f"{sat_name}({norad_id})"
 
             self.table.setRowCount(len(self.main_app.calculated_passes))
             from core.color_manager import color_manager
