@@ -1,0 +1,21 @@
+Sat_ID,Main,Sub,Min_El,Required_Cap,Min_Duration,Pre_Req_Main
+SAT_A,First Contact,TM 확인 / Panel 전개 / TLE update,10,CMD,300,NONE
+SAT_A,Health check,EPS / AOCS / S-band 상태 점검,10,NONE,180,First Contact
+SAT_A,Configuration check,Thermal / STX / FCS param 확인,10,NONE,180,Health check
+SAT_A,X-band Key update,X key update,15,CMD,120,Configuration check
+SAT_A,1차 지상 촬영,시나리오 등록 / 이미징 / 다운로드,20,DOWN,400,X-band Key update
+SAT_A,1차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,1차 지상 촬영
+SAT_A,2차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,1차 Cal Maneuver
+SAT_A,3차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,2차 Cal Maneuver
+SAT_A,FCS Parameter Update,FCP 업데이트 (STS-Gyro up),10,CMD,180,3차 Cal Maneuver
+SAT_A,1차 별촬영,시나리오 등록 / Max logging / AOTM 다운,20,DOWN,360,FCS Parameter Update
+SAT_B,First Contact,TM 확인 / Panel 전개 / TLE update,10,CMD,300,NONE
+SAT_B,Health check,EPS / AOCS / S-band 상태 점검,10,NONE,180,First Contact
+SAT_B,Configuration check,Thermal / STX / FCS param 확인,10,NONE,180,Health check
+SAT_B,X-band Key update,X key update,15,CMD,120,Configuration check
+SAT_B,1차 지상 촬영,시나리오 등록 / 이미징 / 다운로드,20,DOWN,400,X-band Key update
+SAT_B,1차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,1차 지상 촬영
+SAT_B,2차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,1차 Cal Maneuver
+SAT_B,3차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15,BOTH,300,2차 Cal Maneuver
+SAT_B,FCS Parameter Update,FCP 업데이트 (STS-Gyro up),10,CMD,180,3차 Cal Maneuver
+SAT_B,1차 별촬영,시나리오 등록 / Max logging / AOTM 다운,20,DOWN,360,FCS Parameter Update

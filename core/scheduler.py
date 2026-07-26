@@ -1,6 +1,13 @@
 import os
+import sys
 from datetime import datetime, timezone, timedelta
 from skyfield.api import load, wgs84, EarthSatellite
+
+def get_resource_path(relative_path):
+    """PyInstaller 단일 파일/폴더 패키징 시 임시 자원 경로(sys._MEIPASS) 지원"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 def parse_tle_from_dir(tle_dir, selected_files=None):
     satellites = {}
@@ -117,11 +124,15 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     if end_dt.tzinfo is None:
         end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    from skyfield.api import Loader
-    custom_loader = Loader(base_dir)
+    # PyInstaller 실행 환경 감지
+    skyfield_dir = get_resource_path("skyfield_data")
+    if not os.path.exists(skyfield_dir):
+        skyfield_dir = os.path.abspath(".")
 
-    ts = custom_loader.timescale(builtin=False)
+    from skyfield.api import Loader
+    custom_loader = Loader(skyfield_dir)
+
+    ts = custom_loader.timescale(builtin=True)
     t0 = ts.from_datetime(start_dt)
     t1 = ts.from_datetime(end_dt)
     
@@ -175,8 +186,6 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                         })
                     current_pass = {}
 
-    # 🔥 [시간순 경합 그룹 할당 로직 교정]
-    # 지상국별로 겹치는 그룹 생성
     raw_groups = []
     for gs_name in stations.keys():
         station_passes = [p for p in raw_passes if p['station'] == gs_name]
@@ -195,7 +204,6 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
         if current_group:
             raw_groups.append(current_group)
 
-    # 그룹 대표 시간(첫 패스의 AOS) 기준으로 모든 그룹을 정렬하여 시간순 Grp 번호 부여
     raw_groups.sort(key=lambda g: min(x['aos'] for x in g))
 
     calculated_passes = []
@@ -214,6 +222,5 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                 p['selected'] = True
         calculated_passes.extend(g)
 
-    # 최종 결과도 AOS 시간순 정렬
     calculated_passes.sort(key=lambda x: (x['aos'], x['station']))
     return calculated_passes

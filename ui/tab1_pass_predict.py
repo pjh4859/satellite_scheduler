@@ -195,21 +195,35 @@ class PassPredictTab(QWidget):
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Select Satellite to Fetch ({len(sat_list)} found)")
-        dialog.resize(450, 320)
+        dialog.setWindowTitle(f"Select Satellites to Fetch ({len(sat_list)} found)")
+        dialog.resize(500, 360)
         
         dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.addWidget(QLabel(f"<b>Search Results for '{query}':</b> (Select one to download)"))
+        dlg_layout.addWidget(QLabel(f"<b>Search Results for '{query}':</b><br>(Use Ctrl / Shift or 'Select All' to download multiple satellites)"))
         
+        # 다중 선택 지원 리스트 위젯
         list_widget = QListWidget()
+        list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        
         for sat in sat_list:
             display_text = f"🛰️  {sat['sat_name']}  |  NORAD ID: {sat['norad_id']}  ({sat['int_designator']})"
             item = QListWidgetItem(display_text)
             item.setData(Qt.ItemDataRole.UserRole, sat)
             list_widget.addItem(item)
             
-        list_widget.setCurrentRow(0)
         dlg_layout.addWidget(list_widget)
+        
+        # 전체 선택 / 전체 해제 버튼 구역
+        select_ctrl_layout = QHBoxLayout()
+        btn_sel_all = QPushButton("☑ Select All")
+        btn_sel_all.clicked.connect(list_widget.selectAll)
+        select_ctrl_layout.addWidget(btn_sel_all)
+        
+        btn_desel_all = QPushButton("☒ Unselect All")
+        btn_desel_all.clicked.connect(list_widget.clearSelection)
+        select_ctrl_layout.addWidget(btn_desel_all)
+        
+        dlg_layout.addLayout(select_ctrl_layout)
         
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(dialog.accept)
@@ -217,20 +231,31 @@ class PassPredictTab(QWidget):
         dlg_layout.addWidget(button_box)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected_item = list_widget.currentItem()
-            if not selected_item: return
+            selected_items = list_widget.selectedItems()
+            if not selected_items: return
             
-            sat_data = selected_item.data(Qt.ItemDataRole.UserRole)
-            target_norad_id = sat_data['norad_id']
-            target_sat_name = sat_data['sat_name']
+            success_count = 0
+            failed_sats = []
             
-            dl_success, save_path = download_tle_by_norad_id(target_norad_id, target_sat_name, self.tle_dir)
+            for item in selected_items:
+                sat_data = item.data(Qt.ItemDataRole.UserRole)
+                target_norad_id = sat_data['norad_id']
+                target_sat_name = sat_data['sat_name']
+                
+                dl_success, save_path = download_tle_by_norad_id(target_norad_id, target_sat_name, self.tle_dir)
+                if dl_success:
+                    success_count += 1
+                else:
+                    failed_sats.append(target_sat_name)
             
-            if dl_success:
-                QMessageBox.information(self, "Download Complete", f"Successfully fetched TLE for:\n[{target_sat_name}]\n\nSaved as:\n{save_path}")
+            if success_count > 0:
+                msg = f"Successfully fetched TLE files for {success_count} satellite(s)."
+                if failed_sats:
+                    msg += f"\n\nFailed satellites: {', '.join(failed_sats)}"
+                QMessageBox.information(self, "Download Complete", msg)
                 self.refresh_tle_files()
             else:
-                QMessageBox.critical(self, "Download Error", f"Failed to fetch TLE:\n{save_path}")
+                QMessageBox.critical(self, "Download Error", f"Failed to download selected satellites.")
 
     def refresh_stations(self):
         self.gs_list.clear()
