@@ -1,6 +1,0 @@
-﻿# LEOP 미션 제약조건 및 액티비티 명세 규칙
-# X-Band 여부: Y / N, Priority: High / Medium / Low
-Satellite,Activity,Activity Sequence ID,Pre Activity Sequence ID,최소 pass contact 시간,X-Band 여부,Priority
-NEONSAT1,TC_히터_온,101,None,120,N,High
-NEONSAT1,TM_덤프_X밴드,102,101,300,Y,Medium
-SPACEEYE-T1,안테나_전개,201,None,60,N,High
