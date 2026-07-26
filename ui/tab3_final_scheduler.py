@@ -19,7 +19,6 @@ class FinalSchedulerTab(QWidget):
         self.pass_output_dir = "pass_output"
         self.final_output_dir = "final_output"
         
-        # 디렉토리가 없는 경우 자동 생성
         if not os.path.exists(self.plans_dir): os.makedirs(self.plans_dir)
         if not os.path.exists(self.pass_output_dir): os.makedirs(self.pass_output_dir)
         if not os.path.exists(self.final_output_dir): os.makedirs(self.final_output_dir)
@@ -33,7 +32,6 @@ class FinalSchedulerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
-        # Pass 로드 및 폴더 열기
         self.btn_load_pass = QPushButton("📂 Load Tab1 Passes (.yaml)")
         self.btn_load_pass.setStyleSheet("font-weight: bold; padding: 5px;")
         self.btn_load_pass.clicked.connect(self.click_load_pass_yaml)
@@ -45,7 +43,6 @@ class FinalSchedulerTab(QWidget):
         
         top_ctrl.addSpacing(10)
         
-        # Constraints 플랜 로드 및 폴더 열기
         self.btn_load_constraints = QPushButton("📂 Load Tab2 Constraints (.yaml)")
         self.btn_load_constraints.setStyleSheet("font-weight: bold; padding: 5px;")
         self.btn_load_constraints.clicked.connect(self.click_load_constraints_yaml)
@@ -102,7 +99,6 @@ class FinalSchedulerTab(QWidget):
         self.final_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.final_table)
         
-        # 하단 덤프 및 최종 결과 폴더 열기 바
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Export Options:</b>"))
         self.btn_export_csv = QPushButton("Export Final Schedule to CSV")
@@ -114,7 +110,6 @@ class FinalSchedulerTab(QWidget):
         self.btn_export_excel.clicked.connect(self.click_export_excel)
         bottom_ctrl.addWidget(self.btn_export_excel)
         
-        # 🔥 [신규 추가]: 최종 산출물 폴더(final_output) 열기 버튼
         self.btn_open_final_folder = QPushButton("📂 Open Final Output Folder")
         self.btn_open_final_folder.clicked.connect(lambda: self.open_local_folder(self.final_output_dir))
         bottom_ctrl.addWidget(self.btn_open_final_folder)
@@ -326,20 +321,23 @@ class FinalSchedulerTab(QWidget):
         self.refresh_table_colors()
 
     def refresh_table_colors(self):
+        """🔥 [완벽 보완]: 정규화된 키를 사용하여 지상국별 / 위성별 고유 파스텔톤 일괄 배정"""
         row_count = self.final_table.rowCount()
         if row_count == 0: return
+        
         is_station_mode = self.radio_station.isChecked()
+        
         for r in range(row_count):
-            status_text = self.final_table.item(r, 7).text().strip()
-            if status_text == "Bypassed":
-                chosen_color = QColor(255, 235, 235)
+            if is_station_mode:
+                st_item = self.final_table.item(r, 0)
+                st_name = st_item.text().split("(")[0].strip() if st_item else ""
+                _, chosen_color = color_manager.get_station_colors(st_name)
             else:
-                if is_station_mode:
-                    st_name = self.final_table.item(r, 0).text().strip()
-                    _, chosen_color = color_manager.get_station_colors(st_name)
-                else:
-                    sat_raw = self.final_table.item(r, 1).text().split("(")[0].strip()
-                    _, chosen_color = color_manager.get_colors(sat_raw)
+                sat_item = self.final_table.item(r, 1)
+                sat_raw = sat_item.text() if sat_item else ""
+                sat_clean = normalize_sat_name(sat_raw)
+                _, chosen_color = color_manager.get_colors(sat_clean)
+                
             for c in range(self.final_table.columnCount()):
                 cell = self.final_table.item(r, c)
                 if cell: cell.setBackground(chosen_color)

@@ -1,21 +1,21 @@
 ﻿Sat_ID,Main,Sub,Min_El,Required_Cap,Min_Duration,Pre_Req_Main,Sequence_ID
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
-,,,,,,
+NEONSAT1,First Contact,TM 확인 / Panel 전개 / TLE update,10.0,CMD,300.0,NONE,1
+NEONSAT1,Health check,EPS / AOCS / S-band 상태 점검,10.0,NONE,180.0,First Contact,2
+NEONSAT1,Configuration check,Thermal / STX / FCS param 확인,10.0,NONE,180.0,Health check,3
+NEONSAT1,X-band Key update,X key update,15.0,CMD,120.0,Configuration check,4
+NEONSAT1,1차 지상 촬영,시나리오 등록 / 이미징 / 다운로드,20.0,DOWN,400.0,X-band Key update,5
+NEONSAT1,1차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,1차 지상 촬영,6
+NEONSAT1,2차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,1차 Cal Maneuver,7
+NEONSAT1,3차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,2차 Cal Maneuver,8
+NEONSAT1,FCS Parameter Update,FCP 업데이트 (STS-Gyro up),10.0,CMD,180.0,3차 Cal Maneuver,9
+NEONSAT1,1차 별촬영,시나리오 등록 / Max logging / AOTM 다운,20.0,DOWN,360.0,FCS Parameter Update,10
+NEONSAT-1A,First Contact,TM 확인 / Panel 전개 / TLE update,10.0,CMD,300.0,NONE,1
+NEONSAT-1A,Health check,EPS / AOCS / S-band 상태 점검,10.0,NONE,180.0,First Contact,2
+NEONSAT-1A,Configuration check,Thermal / STX / FCS param 확인,10.0,NONE,180.0,Health check,3
+NEONSAT-1A,X-band Key update,X key update,15.0,CMD,120.0,Configuration check,4
+NEONSAT-1A,1차 지상 촬영,시나리오 등록 / 이미징 / 다운로드,20.0,DOWN,400.0,X-band Key update,5
+NEONSAT-1A,1차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,1차 지상 촬영,6
+NEONSAT-1A,2차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,1차 Cal Maneuver,7
+NEONSAT-1A,3차 Cal Maneuver,시나리오 등록 / Max logging / AOTM 다운,15.0,BOTH,300.0,2차 Cal Maneuver,8
+NEONSAT-1A,FCS Parameter Update,FCP 업데이트 (STS-Gyro up),10.0,CMD,180.0,3차 Cal Maneuver,9
+NEONSAT-1A,1차 별촬영,시나리오 등록 / Max logging / AOTM 다운,20.0,DOWN,360.0,FCS Parameter Update,10

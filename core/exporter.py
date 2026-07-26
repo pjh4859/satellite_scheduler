@@ -1,62 +1,47 @@
 import csv
 import yaml
+import re
 from datetime import datetime, timezone
-# 엑셀 색상 스타일링을 위한 라이브러리 임포트
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
+def normalize_sat_name(sat_str):
+    if not sat_str: return ""
+    clean = str(sat_str).split("(")[0].strip()
+    clean = re.sub(r'[^A-Za-z0-9]', '', clean).upper()
+    return clean
+
 def export_to_csv(file_path, passes_list):
-    """🔥 GUI 변경 순서 적용: Ground Station, Satellite, Pass_No 순으로 CSV 저장"""
     selected_passes = [p for p in passes_list if p.get('selected', False)]
-    
-    with open(file_path, "w", encoding="utf-8-sig", newline="") as f: # 한글 깨짐 방지
+    with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        # 헤더 순서 변경
         writer.writerow(["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status"])
-        
         for p in selected_passes:
             writer.writerow([
-                p['station'],     # 1. Station
-                p['satellite'],   # 2. Satellite
-                p['pass_no'],     # 3. Pass_No
-                p['aos'].strftime('%Y-%m-%d %H:%M:%S'),
-                p['los'].strftime('%Y-%m-%d %H:%M:%S'),
-                p['duration'],
-                p['max_el'],
-                p['status']
+                p['station'], p['satellite'], p['pass_no'],
+                p['aos'].strftime('%Y-%m-%d %H:%M:%S'), p['los'].strftime('%Y-%m-%d %H:%M:%S'),
+                p['duration'], p['max_el'], p['status']
             ])
 
 def export_to_yaml(file_path, passes_list):
-    """🔥 GUI 변경 순서 적용: 항목 구조 순서를 Station, Satellite, Pass_No 순으로 빌드"""
     selected_passes = [p for p in passes_list if p.get('selected', False)]
-    
     formatted_list = []
     for p in selected_passes:
-        # 딕셔너리 키 배치 순서 조화
         formatted_list.append({
-            "station": p['station'],
-            "satellite": p['satellite'],
-            "pass_no": int(p['pass_no']),
-            "aos": p['aos'].strftime('%Y-%m-%d %H:%M:%S'),
-            "los": p['los'].strftime('%Y-%m-%d %H:%M:%S'),
-            "duration_sec": float(p['duration']),
-            "max_elevation_deg": float(p['max_el']),
-            "status": p['status']
+            "station": p['station'], "satellite": p['satellite'], "pass_no": int(p['pass_no']),
+            "aos": p['aos'].strftime('%Y-%m-%d %H:%M:%S'), "los": p['los'].strftime('%Y-%m-%d %H:%M:%S'),
+            "duration_sec": float(p['duration']), "max_elevation_deg": float(p['max_el']), "status": p['status']
         })
-        
     payload = {
         "generation_timestamp": datetime.now(timezone.utc).isoformat(),
         "total_passes_count": len(formatted_list),
         "predicted_passes": formatted_list
     }
-    
     with open(file_path, "w", encoding="utf-8") as f:
         yaml.dump(payload, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 def export_to_excel_with_color(file_path, passes_list):
-    """🔥 GUI 변경 순서 적용: Station, Satellite, Pass_No 순으로 유동적 파스텔톤 엑셀 백업"""
     selected_passes = [p for p in passes_list if p.get('selected', False)]
-    
     wb = Workbook()
     ws = wb.active
     ws.title = "Pass Schedule"
@@ -82,13 +67,8 @@ def export_to_excel_with_color(file_path, passes_list):
         ]
         ws.append(row_data)
         
-        # 지상국 이름을 매니저에 질의하여 실시간 화면과 동기화된 파스텔 HEX 코드 자동 획득
-        st_key = p['station'].strip()
+        st_key = p['station'].split("(")[0].strip()
         color_hex, _ = color_manager.get_station_colors(st_key)
-        
-        # ❌ [기존 코드 제거]: if "Conflict" in p['status']: color_hex = "FFEBEB"
-        # 💡 경합(Conflict) 상태인 패스도 오버라이드 없이 고유의 지상국 색상이 그대로 유지됩니다.
-            
         row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
         
         for col_num in range(1, len(headers) + 1):
@@ -103,32 +83,30 @@ def export_to_excel_with_color(file_path, passes_list):
         
     wb.save(file_path)
 
-# core/exporter.py 맨 하단에 붙여넣을 내보내기 소스코드
-
+# ---------------------------------------------------------------------
+# Tab 2 Export Functions
+# ---------------------------------------------------------------------
 def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
-    """2번 탭 그리드에서 추가/수정된 액티비티 사양을 표준 CSV로 안전하게 백업"""
-    import csv
     with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(headers_labels)
         for data in extracted_plan_list:
             writer.writerow([
-                data.get("satellite", ""),
-                data.get("activity", ""),
-                data.get("activity_sequence_id", ""),
-                data.get("pre_activity_sequence_id", ""),
-                data.get("min_pass_contact", ""),
-                data.get("x_band_req", ""),
-                data.get("priority", "")
+                data.get("sat_id", data.get("satellite", "")),
+                data.get("main", data.get("activity", "")),
+                data.get("sub", ""),
+                data.get("min_el", ""),
+                data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
+                data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
+                data.get("pre_req_main", data.get("pre_activity_sequence_id", "")),
+                data.get("sequence_id", data.get("activity_sequence_id", ""))
             ])
 
 def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_labels):
-    """2번 탭 그리드에서 추가/수정된 제약조건 명세를 위성별 파스텔톤 가로줄을 먹여 엑셀 파일로 출력"""
     wb = Workbook()
     ws = wb.active
     ws.title = "Mission Constraints"
     
-    # 상단 다크그레이 헤더 인젝션
     ws.append(headers_labels)
     header_fill = PatternFill(start_color="2A2A2A", end_color="2A2A2A", fill_type="solid")
     header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
@@ -138,26 +116,24 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
         cell.font = header_font
         
     data_font = Font(name="맑은 고딕", size=10)
-    
-    # 🔥 고정 딕셔너리를 완전히 없애고 동적 매니저 로드
     from core.color_manager import color_manager
     
     for row_idx, data in enumerate(extracted_plan_list, start=2):
         row_values = [
-            data.get("satellite", ""),
-            data.get("activity", ""),
-            data.get("activity_sequence_id", ""),
-            data.get("pre_activity_sequence_id", ""),
-            data.get("min_pass_contact", ""),
-            data.get("x_band_req", ""),
-            data.get("priority", "")
+            data.get("sat_id", data.get("satellite", "")),
+            data.get("main", data.get("activity", "")),
+            data.get("sub", ""),
+            data.get("min_el", ""),
+            data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
+            data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
+            data.get("pre_req_main", data.get("pre_activity_sequence_id", "")),
+            data.get("sequence_id", data.get("activity_sequence_id", ""))
         ]
         ws.append(row_values)
         
-        # 🔥 [버그 해결]: GUI 화면 색상과 100% 동일한 고유 동적 파스텔 HEX 코드 자동 매칭 및 신규위성 보장
-        sat_name = data.get("satellite", "").strip()
-        color_hex, _ = color_manager.get_colors(sat_name)
-        
+        sat_raw = data.get("sat_id", data.get("satellite", "")).strip()
+        sat_clean = normalize_sat_name(sat_raw)
+        color_hex, _ = color_manager.get_colors(sat_clean)
         row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
         
         for col_idx in range(1, len(headers_labels) + 1):
@@ -172,14 +148,12 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
         
     wb.save(file_path)
 
-# core/exporter.py 맨 하단의 3번 탭 전용 함수 영역을 교체해 줍니다.
-
+# ---------------------------------------------------------------------
+# Tab 3 Export Functions (정밀 색상 매핑 보완)
+# ---------------------------------------------------------------------
 def export_final_schedule_to_csv(file_path, final_data):
-    """3번 탭 마스터 융합 스케줄을 Select 제외 양식 및 순수 activity 매핑 명세로 CSV 저장"""
-    import csv
     with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        # Select를 완전히 배제한 9개 마스터 헤더 선언
         writer.writerow(["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity"])
         for item in final_data:
             writer.writerow([
@@ -189,9 +163,6 @@ def export_final_schedule_to_csv(file_path, final_data):
             ])
 
 def export_final_schedule_to_excel(file_path, final_data, color_mode):
-    """3번 탭 마스터 융합 스케줄을 Select 제외 양식 및 색상 모드 연동 규격으로 Excel 저장"""
-    from openpyxl import Workbook
-    from openpyxl.styles import PatternFill, Font
     from core.color_manager import color_manager
     
     wb = Workbook()
@@ -217,13 +188,14 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
             item["status"], item["activity"]
         ])
         
-        # GUI의 현재 지상국/위성 라디오 채색 기준과 100% 동기화 매핑
+        # 🔥 [핵심 수정]: 정규화된 지상국/위성 키로 정확하게 파스텔 색상 매핑
         if color_mode == "STATION":
-            st_key = item["station"].strip()
+            st_key = item["station"].split("(")[0].strip()
             color_hex, _ = color_manager.get_station_colors(st_key)
         else:
-            sat_key = item["satellite"].split("(")[0].strip()
-            color_hex, _ = color_manager.get_colors(sat_key)
+            sat_raw = item["satellite"]
+            sat_clean = normalize_sat_name(sat_raw)
+            color_hex, _ = color_manager.get_colors(sat_clean)
             
         row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
         for col_idx in range(1, len(headers) + 1):

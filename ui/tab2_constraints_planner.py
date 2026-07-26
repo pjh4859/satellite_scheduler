@@ -30,7 +30,6 @@ class ConstraintsPlannerTab(QWidget):
         self.btn_import_plan_csv.clicked.connect(self.click_import_constraints)
         top_ctrl.addWidget(self.btn_import_plan_csv)
         
-        # 🔥 [신규 추가]: Plan 폴더 열기 버튼
         self.btn_open_plan_folder = QPushButton("📂 Open Plan Folder")
         self.btn_open_plan_folder.clicked.connect(lambda: self.open_local_folder(self.plans_dir))
         top_ctrl.addWidget(self.btn_open_plan_folder)
@@ -126,7 +125,7 @@ class ConstraintsPlannerTab(QWidget):
         from core.color_manager import color_manager
         
         for row_idx, data in enumerate(plan_rows):
-            sat_name = data.get("sat_id", "").strip()
+            sat_name = str(data.get("sat_id", data.get("satellite", ""))).strip()
             _, sat_bg_color = color_manager.get_colors(sat_name)
             
             for col_idx, key in enumerate(self.plan_headers_keys):
