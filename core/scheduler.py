@@ -3,11 +3,6 @@ from datetime import datetime, timezone, timedelta
 from skyfield.api import load, wgs84, EarthSatellite
 
 def parse_tle_from_dir(tle_dir, selected_files=None):
-    """
-    tle/ 폴더 내부에서 TLE 파일들을 읽어 파싱합니다.
-    3-Line (Header + Line1 + Line2) 및 2-Line (Line1 + Line2) 모두 대응하며,
-    Line1[2:7]에서 순수 NORAD ID(위성 번호)를 정확히 추출합니다.
-    """
     satellites = {}
     if not os.path.exists(tle_dir):
         os.makedirs(tle_dir)
@@ -26,23 +21,17 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
                 
             idx = 0
             while idx < len(lines):
-                # Line 1과 Line 2의 위치 탐색
                 if lines[idx].startswith("1 ") and (idx + 1) < len(lines) and lines[idx+1].startswith("2 "):
                     line1 = lines[idx]
                     line2 = lines[idx+1]
-                    
-                    # Line 1의 3번째~7번째 글자에서 5자리 NORAD ID(위성 번호) 추출
                     norad_id = line1[2:7].strip()
                     
-                    # Line 1 바로 앞줄에 위성 이름(Header)이 존재하는지 확인
                     sat_name = None
                     if idx > 0 and not lines[idx-1].startswith("1 ") and not lines[idx-1].startswith("2 "):
                         sat_name = lines[idx-1].strip()
                     else:
-                        # Header가 없는 2-line 형태일 경우 파일명에서 추출
                         sat_name = os.path.splitext(filename)[0].strip()
                         
-                    # 딕셔너리 Key 및 데이터 저장 (위성 이름과 5자리 위성 번호 분리 명시)
                     satellites[sat_name] = {
                         'lines': (line1, line2),
                         'norad_id': norad_id,
@@ -55,7 +44,6 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
     return satellites
 
 def parse_stations_from_dir(stations_dir):
-    """지상국 속성 확장: 이름, 위도, 경도, 다운로드 가능여부, 커맨딩 가능여부를 읽어옵니다."""
     stations_list = []
     if not os.path.exists(stations_dir):
         os.makedirs(stations_dir)
@@ -91,7 +79,6 @@ def parse_stations_from_dir(stations_dir):
     return stations_list
 
 def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
-    """시간 윈도우 내에서 위성이 북극점(최고 위도)을 통과하는 시점들을 추적해 궤도 카운트를 생성합니다."""
     orbit_starts = []
     start_dt = t0.utc_datetime()
     end_dt = t1.utc_datetime()
@@ -188,12 +175,12 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                         })
                     current_pass = {}
 
-    calculated_passes = []
-    group_counter = 0
+    # 🔥 [시간순 경합 그룹 할당 로직 교정]
+    # 지상국별로 겹치는 그룹 생성
+    raw_groups = []
     for gs_name in stations.keys():
         station_passes = [p for p in raw_passes if p['station'] == gs_name]
         station_passes.sort(key=lambda x: x['aos'])
-        groups = []
         current_group = []
         for p in station_passes:
             if not current_group:
@@ -203,23 +190,30 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                 if p['aos'] < max_los_in_group:
                     current_group.append(p)
                 else:
-                    groups.append(current_group)
+                    raw_groups.append(current_group)
                     current_group = [p]
         if current_group:
-            groups.append(current_group)
-            
-        for g in groups:
-            if len(g) > 1:
-                group_counter += 1
-                longest_pass = max(g, key=lambda x: x['duration'])
-                for p in g:
-                    p['conflict_group'] = group_counter
-                    p['status'] = f"Conflict (Grp {group_counter})"
-                    p['selected'] = (p == longest_pass)
-            else:
-                for p in g:
-                    p['selected'] = True
-            calculated_passes.extend(g)
-            
+            raw_groups.append(current_group)
+
+    # 그룹 대표 시간(첫 패스의 AOS) 기준으로 모든 그룹을 정렬하여 시간순 Grp 번호 부여
+    raw_groups.sort(key=lambda g: min(x['aos'] for x in g))
+
+    calculated_passes = []
+    group_counter = 0
+
+    for g in raw_groups:
+        if len(g) > 1:
+            group_counter += 1
+            longest_pass = max(g, key=lambda x: x['duration'])
+            for p in g:
+                p['conflict_group'] = group_counter
+                p['status'] = f"Conflict (Grp {group_counter})"
+                p['selected'] = (p == longest_pass)
+        else:
+            for p in g:
+                p['selected'] = True
+        calculated_passes.extend(g)
+
+    # 최종 결과도 AOS 시간순 정렬
     calculated_passes.sort(key=lambda x: (x['aos'], x['station']))
     return calculated_passes

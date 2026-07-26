@@ -84,13 +84,13 @@ class PassPredictTab(QWidget):
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
-        # 4. Filters 구역
+        # 4. Filters 구역 (🔥 Min Elevation 기본값 5 로 설정)
         left_panel.addWidget(QLabel("<b>4. Filters:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
         self.min_el_spin = QSpinBox()
         self.min_el_spin.setRange(0, 90)
-        self.min_el_spin.setValue(10)
+        self.min_el_spin.setValue(5) # 🔥 10 -> 5로 수정 완료
         el_layout.addWidget(self.min_el_spin)
         left_panel.addLayout(el_layout)
         
