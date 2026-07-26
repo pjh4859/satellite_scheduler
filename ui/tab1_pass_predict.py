@@ -18,6 +18,11 @@ class PassPredictTab(QWidget):
         self.main_app = main_app
         self.tle_dir = "tle"
         self.stations_dir = "stations"
+        self.pass_output_dir = "pass_output"
+        
+        if not os.path.exists(self.pass_output_dir):
+            os.makedirs(self.pass_output_dir)
+            
         self.init_ui()
         self.refresh_tle_files()
         self.refresh_stations()
@@ -116,6 +121,11 @@ class PassPredictTab(QWidget):
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
+        
+        self.btn_open_pass_out = QPushButton("📂 Open Pass Output Folder")
+        self.btn_open_pass_out.clicked.connect(lambda: self.open_local_folder(self.pass_output_dir))
+        select_all_layout.addWidget(self.btn_open_pass_out)
+        
         select_all_layout.addStretch()
         
         self.btn_select_all = QPushButton("☑ Check All")
@@ -175,12 +185,9 @@ class PassPredictTab(QWidget):
 
     def click_fetch_online_tle(self):
         query, ok = QInputDialog.getText(
-            self, 
-            "CelesTrak Satellite Search", 
-            "Enter Satellite Keyword or NORAD CatNR (e.g. NEONSAT, ISS, 39634):"
+            self, "CelesTrak Satellite Search", "Enter Satellite Keyword or NORAD CatNR (e.g. NEONSAT, ISS, 39634):"
         )
-        if not ok or not query.strip():
-            return
+        if not ok or not query.strip(): return
 
         success, sat_list, msg = search_satellites_from_celestrak(query)
         if not success or not sat_list:
@@ -258,47 +265,12 @@ class PassPredictTab(QWidget):
         self.populate_table()
 
     def populate_table(self):
-        if self.main_app.is_populating:
-            return
+        if self.main_app.is_populating: return
         self.table.setRowCount(0)
-        if not self.main_app.calculated_passes:
-            return
+        if not self.main_app.calculated_passes: return
             
         self.main_app.is_populating = True
-        
         try:
-            # 🔥 [위성 이름(위성 번호) 표출 보장 로직]
-            for p in self.main_app.calculated_passes:
-                sat_key = p['satellite']
-                
-                # 이미 'NEONSAT-1A(67614)' 형태로 괄호와 NORAD ID가 완비된 경우 유지
-                if "(" in sat_key and ")" in sat_key:
-                    continue
-                
-                # 괄호가 없을 경우 'SAT_67614' 형태에서 NORAD ID 추출
-                norad_id = sat_key.replace("SAT_", "").strip()
-                sat_name = sat_key
-                
-                # TLE 파일 내 1번째 줄(헤더/위성 이름)을 직접 스캔하여 정확한 위성 이름 획득
-                if os.path.exists(self.tle_dir):
-                    for filename in os.listdir(self.tle_dir):
-                        if filename.endswith(".tle") or filename.endswith(".txt"):
-                            try:
-                                with open(os.path.join(self.tle_dir, filename), "r", encoding="utf-8") as f:
-                                    lines = [line.strip() for line in f if line.strip()]
-                                for idx, line in enumerate(lines):
-                                    if line.startswith("1 ") and norad_id in line:
-                                        if idx > 0 and not lines[idx-1].startswith("1 ") and not lines[idx-1].startswith("2 "):
-                                            sat_name = lines[idx-1]
-                                        else:
-                                            # 파일명 기반 위성 이름 추출
-                                            sat_name = os.path.splitext(filename)[0]
-                                        break
-                            except:
-                                continue
-                                
-                p['satellite'] = f"{sat_name}({norad_id})"
-
             self.table.setRowCount(len(self.main_app.calculated_passes))
             from core.color_manager import color_manager
             
@@ -322,25 +294,18 @@ class PassPredictTab(QWidget):
                 st_raw = p['station'].split("(")[0].strip()
                 _, station_bg_color = color_manager.get_station_colors(st_raw)
                 
-                if "Conflict" in status_text:
-                    row_color = QColor(255, 235, 235)
-                else:
-                    row_color = station_bg_color
+                row_color = QColor(255, 235, 235) if "Conflict" in status_text else station_bg_color
                     
                 for col_idx in range(self.table.columnCount()):
                     cell = self.table.item(row_idx, col_idx)
-                    if cell:
-                        cell.setBackground(row_color)
+                    if cell: cell.setBackground(row_color)
         finally:
             self.main_app.is_populating = False
 
     def handle_table_lock(self, item):
-        if self.main_app.is_populating or item.column() != 0:
-            return
-            
+        if self.main_app.is_populating or item.column() != 0: return
         user_data = item.data(Qt.ItemDataRole.UserRole)
-        if not user_data: 
-            return
+        if not user_data: return
             
         current_row, group_id, station_name = user_data
         if group_id is None:
@@ -366,24 +331,21 @@ class PassPredictTab(QWidget):
         else:
             self.main_app.calculated_passes[current_row]['selected'] = False
             self.main_app.is_populating = True
-            try:
-                self.populate_table()
-            finally:
-                self.main_app.is_populating = False
+            try: self.populate_table()
+            finally: self.main_app.is_populating = False
 
     def click_export_csv(self):
         if not self.main_app.calculated_passes: return
-        path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", "", "CSV Files (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", self.pass_output_dir, "CSV Files (*.csv)")
         if path: export_to_csv(path, self.main_app.calculated_passes)
 
     def click_export_yaml(self):
         if not self.main_app.calculated_passes: return
-        path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", "", "YAML Files (*.yaml)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", self.pass_output_dir, "YAML Files (*.yaml)")
         if path: export_to_yaml(path, self.main_app.calculated_passes)
 
     def set_all_checkboxes(self, check_state):
-        if not self.main_app.calculated_passes:
-            return
+        if not self.main_app.calculated_passes: return
         self.main_app.is_populating = True
         target_state = Qt.CheckState.Checked if check_state else Qt.CheckState.Unchecked
         for r in range(self.table.rowCount()):
@@ -399,7 +361,7 @@ class PassPredictTab(QWidget):
         if not any(p['selected'] for p in self.main_app.calculated_passes):
             QMessageBox.warning(self, "Warning", "No passes are selected.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", "", "Excel Files (*.xlsx)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", self.pass_output_dir, "Excel Files (*.xlsx)")
         if path:
             try:
                 export_to_excel_with_color(path, self.main_app.calculated_passes)

@@ -2,8 +2,8 @@ import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QLabel, QFileDialog, 
                              QHeaderView, QMessageBox, QDialog, QTextEdit)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QColor, QDesktopServices
 
 from core.exporter import export_constraints_to_csv, export_constraints_to_excel_color
 from core.plan_parser import load_plan_csv, load_plan_excel, save_plan_to_yaml, PLAN_HEADERS
@@ -13,6 +13,10 @@ class ConstraintsPlannerTab(QWidget):
         super().__init__()
         self.main_app = main_app
         self.plans_dir = "plans"
+        
+        if not os.path.exists(self.plans_dir):
+            os.makedirs(self.plans_dir)
+            
         self.plan_headers_keys = list(PLAN_HEADERS.keys())
         self.plan_headers_labels = list(PLAN_HEADERS.values())
         self.init_ui()
@@ -20,10 +24,16 @@ class ConstraintsPlannerTab(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
+        
         self.btn_import_plan_csv = QPushButton("📂 Load Constraint File (Excel / CSV)")
         self.btn_import_plan_csv.setStyleSheet("font-weight: bold; padding: 6px; background-color: #2E7D32; color: white;")
         self.btn_import_plan_csv.clicked.connect(self.click_import_constraints)
         top_ctrl.addWidget(self.btn_import_plan_csv)
+        
+        # 🔥 [신규 추가]: Plan 폴더 열기 버튼
+        self.btn_open_plan_folder = QPushButton("📂 Open Plan Folder")
+        self.btn_open_plan_folder.clicked.connect(lambda: self.open_local_folder(self.plans_dir))
+        top_ctrl.addWidget(self.btn_open_plan_folder)
         
         self.btn_add_row = QPushButton("➕ Add New Activity")
         self.btn_add_row.clicked.connect(self.click_add_plan_row)
@@ -69,10 +79,14 @@ class ConstraintsPlannerTab(QWidget):
         
         layout.addLayout(bottom_ctrl)
 
+    def open_local_folder(self, folder_path):
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        abs_path = os.path.abspath(folder_path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+
     def handle_cell_double_clicked(self, item):
-        main_col_idx = 1
-        if item.column() != main_col_idx and item.column() != 2:
-            return
+        if item.column() != 1 and item.column() != 2: return
             
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Activity Detail")
