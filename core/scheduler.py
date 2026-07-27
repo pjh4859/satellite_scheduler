@@ -118,13 +118,12 @@ def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
             return orbit_no
     return default_start_pass
 
-def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, start_pass_no=1):
+def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, start_pass_no=1, equalize_allocation=True):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
     if end_dt.tzinfo is None:
         end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    # PyInstaller 실행 환경 감지
     skyfield_dir = get_resource_path("skyfield_data")
     if not os.path.exists(skyfield_dir):
         skyfield_dir = os.path.abspath(".")
@@ -208,18 +207,41 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
 
     calculated_passes = []
     group_counter = 0
+    
+    # 🔥 위성별 누적 선택 횟수 추적기 (균등 배정용)
+    sat_selected_counts = {sat_key.split("(")[0].strip(): 0 for sat_key in tle_data.keys()}
 
     for g in raw_groups:
         if len(g) > 1:
             group_counter += 1
-            longest_pass = max(g, key=lambda x: x['duration'])
+            
+            if equalize_allocation:
+                # 🔥 [Round-Robin 균등 배정]: (1) 선택받은 횟수가 가장 적은 위성 우선 -> (2) Duration 길수록 우선
+                def fairness_sort_key(p):
+                    sat_clean = p['satellite'].split("(")[0].strip()
+                    return (sat_selected_counts.get(sat_clean, 0), -p['duration'])
+                
+                sorted_candidates = sorted(g, key=fairness_sort_key)
+                winning_pass = sorted_candidates[0]
+            else:
+                # [기본 Max Duration 배정]
+                winning_pass = max(g, key=lambda x: x['duration'])
+
             for p in g:
                 p['conflict_group'] = group_counter
                 p['status'] = f"Conflict (Grp {group_counter})"
-                p['selected'] = (p == longest_pass)
+                is_win = (p == winning_pass)
+                p['selected'] = is_win
+                
+                if is_win:
+                    sat_clean = p['satellite'].split("(")[0].strip()
+                    sat_selected_counts[sat_clean] = sat_selected_counts.get(sat_clean, 0) + 1
         else:
             for p in g:
                 p['selected'] = True
+                sat_clean = p['satellite'].split("(")[0].strip()
+                sat_selected_counts[sat_clean] = sat_selected_counts.get(sat_clean, 0) + 1
+                
         calculated_passes.extend(g)
 
     calculated_passes.sort(key=lambda x: (x['aos'], x['station']))

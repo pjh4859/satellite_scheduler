@@ -1,15 +1,151 @@
 import os
 from datetime import datetime, timedelta, timezone
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
-                             QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox)
+                             QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox)
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
+
+
+class HighVisibilityNavigationToolbar(NavigationToolbar):
+    """다크 배경에서도 돋보기/집/손 아이콘이 100% 선명하게 보이는 고대비 툴바"""
+    def __init__(self, canvas, parent=None):
+        super().__init__(canvas, parent)
+        # 툴바 배경과 텍스트를 고대비 라이트 스타일로 강조
+        self.setStyleSheet("""
+            QToolBar {
+                background-color: #F8F9FA;
+                border: 1px solid #CCCCCC;
+                padding: 4px;
+                spacing: 6px;
+            }
+            QToolButton {
+                background-color: #FFFFFF;
+                color: #111111;
+                border: 1px solid #B0BEC5;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background-color: #E3F2FD;
+                border: 1px solid #2196F3;
+            }
+            QToolButton:checked {
+                background-color: #BBDEFB;
+                border: 1px solid #1976D2;
+            }
+            QLabel {
+                color: #111111;
+                font-weight: bold;
+            }
+        """)
+
+
+class GanttChartDialog(QDialog):
+    """고대비 툴바 및 네비게이션이 탑재된 간트 차트 팝업"""
+    def __init__(self, calculated_passes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("📊 Multi-Satellite Pass Allocation Gantt Timeline")
+        self.resize(1150, 680)
+        self.passes = calculated_passes
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1E1E1E')
+        ax.set_facecolor('#262626')
+        
+        stations = sorted(list({p['station'] for p in self.passes}))
+        st_y_map = {st: i for i, st in enumerate(stations)}
+        
+        from core.color_manager import color_manager
+        
+        for p in self.passes:
+            st = p['station']
+            sat_raw = p['satellite']
+            sat_clean = sat_raw.split("(")[0].strip()
+            
+            y_pos = st_y_map[st]
+            aos_dt = p['aos']
+            los_dt = p['los']
+            
+            is_selected = p.get('selected', True)
+            
+            aos_num = mdates.date2num(aos_dt)
+            los_num = mdates.date2num(los_dt)
+            width = los_num - aos_num
+            
+            if is_selected:
+                hex_color, _ = color_manager.get_colors(sat_clean)
+                face_color = f"#{hex_color}"
+                edge_color = "#FFFFFF"
+                alpha = 0.95
+                hatch = None
+            else:
+                face_color = "#3A3A3A"
+                edge_color = "#777777"
+                alpha = 0.5
+                hatch = "///"
+
+            ax.barh(y_pos, width, left=aos_num, height=0.45, 
+                    align='center', color=face_color, edgecolor=edge_color, 
+                    alpha=alpha, hatch=hatch, linewidth=0.8)
+            
+            if is_selected and width > 0.0008:
+                mid_num = aos_num + (width / 2.0)
+                try:
+                    mid_date = mdates.num2date(mid_num)
+                    ax.text(mid_date, y_pos, sat_clean, ha='center', va='center', 
+                            fontsize=8, fontweight='bold', color='#111111', clip_on=True)
+                except Exception:
+                    pass
+
+        ax.set_yticks(range(len(stations)))
+        ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#FFFFFF')
+        ax.xaxis_date()
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M', tz=timezone.utc))
+        fig.autofmt_xdate()
+        
+        ax.set_title("Timeline Matrix: Allocated Passes (Solid Pastel) vs Collided / Blocked (Hatched Gray)", 
+                     fontsize=12, fontweight='bold', color='#FFFFFF', pad=15)
+        ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#DDDDDD')
+        
+        ax.grid(True, linestyle=':', alpha=0.35, color='#999999')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_color('#777777')
+        ax.spines['bottom'].set_color('#777777')
+        
+        if stations:
+            ax.set_ylim(-0.6, len(stations) - 0.4)
+            
+        fig.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.18)
+        
+        canvas = FigureCanvas(fig)
+        
+        # 🔥 [고대비 툴바 연결 - 돋보기/집 아이콘 선명화]
+        toolbar = HighVisibilityNavigationToolbar(canvas, self)
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+        
+        btn_close = QPushButton("Close Timeline Chart")
+        btn_close.setStyleSheet("background-color: #333333; color: white; font-weight: bold; padding: 6px;")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
 
 
 class PassPredictTab(QWidget):
@@ -70,27 +206,29 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(gs_btn_layout)
         
-        # 3. Time Window (UTC) 구역
+        # 3. Time Window (UTC) 구역 (24시간 형식 적용)
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
         left_panel.addWidget(QLabel("Start Time:"))
         self.start_time_edit = QDateTimeEdit(now_utc_naive)
+        self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.start_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.start_time_edit)
         
         left_panel.addWidget(QLabel("End Time:"))
         self.end_time_edit = QDateTimeEdit(now_utc_naive + timedelta(days=1))
+        self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
-        # 4. Filters 구역 (🔥 Min Elevation 기본값 5 로 설정)
-        left_panel.addWidget(QLabel("<b>4. Filters:</b>"))
+        # 4. Filters 구역
+        left_panel.addWidget(QLabel("<b>4. Filters & Scheduling Rules:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
         self.min_el_spin = QSpinBox()
         self.min_el_spin.setRange(0, 90)
-        self.min_el_spin.setValue(5) # 🔥 10 -> 5로 수정 완료
+        self.min_el_spin.setValue(5)
         el_layout.addWidget(self.min_el_spin)
         left_panel.addLayout(el_layout)
         
@@ -109,6 +247,19 @@ class PassPredictTab(QWidget):
         self.start_pass_spin.setValue(1)
         pass_no_layout.addWidget(self.start_pass_spin)
         left_panel.addLayout(pass_no_layout)
+        
+        self.chk_equalize_sat = QCheckBox("Equalize Sat Allocation (Fairness)")
+        self.chk_equalize_sat.setChecked(True)
+        self.chk_equalize_sat.setToolTip("Rotates pass assignments fairly among swarm/multi-satellites during conflicts.")
+        self.chk_equalize_sat.setStyleSheet("font-weight: bold; color: #1B5E20;")
+        left_panel.addWidget(self.chk_equalize_sat)
+        
+        self.lbl_logic_desc = QLabel(
+            "<i>ℹ️ Swarm/Multi-sat fair distribution algorithm based on pass count & duration.</i>"
+        )
+        self.lbl_logic_desc.setWordWrap(True)
+        self.lbl_logic_desc.setStyleSheet("color: #555555; font-size: 11px; margin-bottom: 5px; margin-left: 15px;")
+        left_panel.addWidget(self.lbl_logic_desc)
         
         self.btn_calculate = QPushButton("Calculate Pass Schedule")
         self.btn_calculate.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;")
@@ -139,6 +290,10 @@ class PassPredictTab(QWidget):
         select_all_layout.addWidget(self.btn_unselect_all)
         right_panel.addLayout(select_all_layout)
         
+        self.lbl_summary_bar = QLabel("📊 Satellite Pass Distribution Summary: Run calculation to view metrics.")
+        self.lbl_summary_bar.setStyleSheet("background-color: #F1F8E9; border: 1px solid #C8E6C9; padding: 6px; font-weight: bold; color: #2E7D32;")
+        right_panel.addWidget(self.lbl_summary_bar)
+        
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
@@ -151,6 +306,12 @@ class PassPredictTab(QWidget):
         right_panel.addWidget(self.table)
         
         btn_layout = QHBoxLayout()
+        
+        self.btn_gantt_chart = QPushButton("📊 View Gantt Timeline Chart")
+        self.btn_gantt_chart.setStyleSheet("background-color: #6A1B9A; color: white; font-weight: bold;")
+        self.btn_gantt_chart.clicked.connect(self.click_view_gantt_chart)
+        btn_layout.addWidget(self.btn_gantt_chart)
+        
         self.btn_csv = QPushButton("Export Selected to CSV")
         self.btn_csv.clicked.connect(self.click_export_csv)
         btn_layout.addWidget(self.btn_csv)
@@ -201,7 +362,6 @@ class PassPredictTab(QWidget):
         dlg_layout = QVBoxLayout(dialog)
         dlg_layout.addWidget(QLabel(f"<b>Search Results for '{query}':</b><br>(Use Ctrl / Shift or 'Select All' to download multiple satellites)"))
         
-        # 다중 선택 지원 리스트 위젯
         list_widget = QListWidget()
         list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         
@@ -213,7 +373,6 @@ class PassPredictTab(QWidget):
             
         dlg_layout.addWidget(list_widget)
         
-        # 전체 선택 / 전체 해제 버튼 구역
         select_ctrl_layout = QHBoxLayout()
         btn_sel_all = QPushButton("☑ Select All")
         btn_sel_all.clicked.connect(list_widget.selectAll)
@@ -279,15 +438,41 @@ class PassPredictTab(QWidget):
         min_el = self.min_el_spin.value()
         min_dur = self.min_dur_spin.value()
         start_pass_no = self.start_pass_spin.value()
+        equalize = self.chk_equalize_sat.isChecked()
         
         if not tle_data or not selected_stations:
             QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
             return
             
         self.main_app.calculated_passes = calculate_passes(
-            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no
+            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
+            equalize_allocation=equalize
         )
         self.populate_table()
+
+    def update_summary_dashboard(self):
+        if not self.main_app.calculated_passes:
+            self.lbl_summary_bar.setText("📊 Satellite Pass Distribution Summary: No data calculated.")
+            return
+            
+        sat_stats = {}
+        for p in self.main_app.calculated_passes:
+            sat_clean = p['satellite'].split("(")[0].strip()
+            if sat_clean not in sat_stats:
+                sat_stats[sat_clean] = {'selected_count': 0, 'total_count': 0, 'total_duration_sec': 0.0}
+                
+            sat_stats[sat_clean]['total_count'] += 1
+            if p.get('selected', False):
+                sat_stats[sat_clean]['selected_count'] += 1
+                sat_stats[sat_clean]['total_duration_sec'] += float(p.get('duration', 0))
+                
+        summary_tokens = []
+        for sat_name, stats in sorted(sat_stats.items()):
+            dur_min = stats['total_duration_sec'] / 60.0
+            summary_tokens.append(f"🛰️ <b>{sat_name}</b>: {stats['selected_count']}/{stats['total_count']} passes ({dur_min:.1f} min)")
+            
+        summary_text = "📊 <b>Pass Allocation Summary:</b> &nbsp;&nbsp;|&nbsp;&nbsp; " + " &nbsp;&nbsp;|&nbsp;&nbsp; ".join(summary_tokens)
+        self.lbl_summary_bar.setText(summary_text)
 
     def populate_table(self):
         if self.main_app.is_populating: return
@@ -324,8 +509,17 @@ class PassPredictTab(QWidget):
                 for col_idx in range(self.table.columnCount()):
                     cell = self.table.item(row_idx, col_idx)
                     if cell: cell.setBackground(row_color)
+                    
+            self.update_summary_dashboard()
         finally:
             self.main_app.is_populating = False
+
+    def click_view_gantt_chart(self):
+        if not self.main_app.calculated_passes:
+            QMessageBox.warning(self, "Warning", "Please calculate pass schedule first.")
+            return
+        dialog = GanttChartDialog(self.main_app.calculated_passes, self)
+        dialog.exec()
 
     def handle_table_lock(self, item):
         if self.main_app.is_populating or item.column() != 0: return
@@ -335,6 +529,7 @@ class PassPredictTab(QWidget):
         current_row, group_id, station_name = user_data
         if group_id is None:
             self.main_app.calculated_passes[current_row]['selected'] = (item.checkState() == Qt.CheckState.Checked)
+            self.update_summary_dashboard()
             return
             
         if item.checkState() == Qt.CheckState.Checked:
