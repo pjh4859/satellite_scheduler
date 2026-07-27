@@ -26,17 +26,17 @@ def normalize_sat_name(sat_str):
     return clean
 
 def parse_row_flexible(row_dict):
-    """다양한 형태의 CSV/Excel 헤더 명칭을 표준 키로 매핑"""
+    """다양한 형태의 CSV/Excel/YAML 헤더 명칭을 표준 키로 매핑"""
     col_map = {str(k).strip().lower().replace("_", "").replace(" ", ""): v for k, v in row_dict.items()}
     
-    sat = row_dict.get('Sat_ID', row_dict.get('Satellite', ''))
-    main = row_dict.get('Main', row_dict.get('Activity', ''))
-    sub = row_dict.get('Sub', '')
+    sat = row_dict.get('Sat_ID', row_dict.get('sat_id', row_dict.get('Satellite', row_dict.get('satellite', ''))))
+    main = row_dict.get('Main', row_dict.get('main', row_dict.get('Activity', row_dict.get('activity', ''))))
+    sub = row_dict.get('Sub', row_dict.get('sub', ''))
     min_el = row_dict.get('Min_El', row_dict.get('min_el', 0))
-    req_cap = row_dict.get('Required_Cap', row_dict.get('X-Band 여부', 'NONE'))
-    min_dur = row_dict.get('Min_Duration', row_dict.get('최소 pass contact 시간', 0))
-    pre_req = row_dict.get('Pre_Req_Main', row_dict.get('Pre Activity Sequence ID', 'NONE'))
-    seq_id = row_dict.get('Sequence_ID', row_dict.get('Activity Sequence ID', 999))
+    req_cap = row_dict.get('Required_Cap', row_dict.get('req_cap', row_dict.get('required_cap', row_dict.get('X-Band 여부', 'NONE'))))
+    min_dur = row_dict.get('Min_Duration', row_dict.get('min_dur', row_dict.get('min_duration', row_dict.get('최소 pass contact 시간', 0))))
+    pre_req = row_dict.get('Pre_Req_Main', row_dict.get('pre_req_main', row_dict.get('Pre Activity Sequence ID', 'NONE')))
+    seq_id = row_dict.get('Sequence_ID', row_dict.get('sequence_id', row_dict.get('activity_sequence_id', 999)))
 
     # X-Band Y/N 값 대응
     req_cap_str = str(req_cap).strip().upper()
@@ -88,6 +88,19 @@ def create_default_plan_excel(plans_dir):
     ws.append(headers)
     wb.save(xlsx_path)
 
+def load_plan_yaml(file_path):
+    """DRM 방지 및 보안 환경 대응용 YAML 파일 로더"""
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = yaml.safe_load(f) or {}
+        
+    if isinstance(content, list):
+        raw_list = content
+    else:
+        raw_list = content.get("mission_constraints", content.get("constraints", []))
+        
+    parsed_rows = [parse_row_flexible(item) for item in raw_list]
+    return parsed_rows
+
 def load_plan_csv(file_path):
     encodings = ['utf-8-sig', 'utf-8', 'cp949', 'euc-kr']
     lines = []
@@ -114,6 +127,16 @@ def load_plan_excel(file_path):
         row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
         parsed_rows.append(parse_row_flexible(row_dict))
     return parsed_rows
+
+def load_plan_file(file_path):
+    """확장자(.yaml, .yml, .xlsx, .csv) 자동 판별 로더"""
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in [".yaml", ".yml"]:
+        return load_plan_yaml(file_path)
+    elif ext == ".xlsx":
+        return load_plan_excel(file_path)
+    else:
+        return load_plan_csv(file_path)
 
 def save_plan_to_yaml(dest_path, plan_data_list):
     payload = {

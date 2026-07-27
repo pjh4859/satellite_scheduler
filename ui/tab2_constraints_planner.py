@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
 
 from core.exporter import export_constraints_to_csv, export_constraints_to_excel_color
-from core.plan_parser import load_plan_csv, load_plan_excel, save_plan_to_yaml, PLAN_HEADERS
+from core.plan_parser import load_plan_file, save_plan_to_yaml, PLAN_HEADERS
 
 class ConstraintsPlannerTab(QWidget):
     def __init__(self, main_app):
@@ -25,10 +25,11 @@ class ConstraintsPlannerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
-        self.btn_import_plan_csv = QPushButton("📂 Load Constraint File (Excel / CSV)")
-        self.btn_import_plan_csv.setStyleSheet("font-weight: bold; padding: 6px; background-color: #2E7D32; color: white;")
-        self.btn_import_plan_csv.clicked.connect(self.click_import_constraints)
-        top_ctrl.addWidget(self.btn_import_plan_csv)
+        # 🔥 YAML 지원 문구 반영
+        self.btn_import_plan_file = QPushButton("📂 Load Constraint File (YAML / Excel / CSV)")
+        self.btn_import_plan_file.setStyleSheet("font-weight: bold; padding: 6px; background-color: #2E7D32; color: white;")
+        self.btn_import_plan_file.clicked.connect(self.click_import_constraints)
+        top_ctrl.addWidget(self.btn_import_plan_file)
         
         self.btn_open_plan_folder = QPushButton("📂 Open Plan Folder")
         self.btn_open_plan_folder.clicked.connect(lambda: self.open_local_folder(self.plans_dir))
@@ -62,6 +63,11 @@ class ConstraintsPlannerTab(QWidget):
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Save Options:</b>"))
         
+        self.btn_save_plan_yaml = QPushButton("Compile to Constraints YAML")
+        self.btn_save_plan_yaml.setStyleSheet("background-color: #008CBA; color: white; font-weight: bold;")
+        self.btn_save_plan_yaml.clicked.connect(lambda: self.click_save_plan_file("YAML"))
+        bottom_ctrl.addWidget(self.btn_save_plan_yaml)
+        
         self.btn_save_plan_csv = QPushButton("Export to CSV")
         self.btn_save_plan_csv.clicked.connect(lambda: self.click_save_plan_file("CSV"))
         bottom_ctrl.addWidget(self.btn_save_plan_csv)
@@ -70,11 +76,6 @@ class ConstraintsPlannerTab(QWidget):
         self.btn_save_plan_excel.setStyleSheet("color: #1E7145; font-weight: bold;")
         self.btn_save_plan_excel.clicked.connect(lambda: self.click_save_plan_file("EXCEL"))
         bottom_ctrl.addWidget(self.btn_save_plan_excel)
-        
-        self.btn_save_plan_yaml = QPushButton("Compile to Constraints YAML")
-        self.btn_save_plan_yaml.setStyleSheet("background-color: #008CBA; color: white; font-weight: bold;")
-        self.btn_save_plan_yaml.clicked.connect(lambda: self.click_save_plan_file("YAML"))
-        bottom_ctrl.addWidget(self.btn_save_plan_yaml)
         
         layout.addLayout(bottom_ctrl)
 
@@ -109,10 +110,13 @@ class ConstraintsPlannerTab(QWidget):
             self.plan_table.resizeRowsToContents()
 
     def click_import_constraints(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Constraints File", self.plans_dir, "Supported Files (*.xlsx *.csv)")
+        # YAML, Excel, CSV 모두 포함된 필터
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Constraints File", self.plans_dir, "Supported Files (*.yaml *.yml *.xlsx *.csv)"
+        )
         if not path: return
         try:
-            plan_rows = load_plan_excel(path) if path.endswith(".xlsx") else load_plan_csv(path)
+            plan_rows = load_plan_file(path) # 확장자 분기 자동 로딩
             self.populate_plan_table_ui(plan_rows)
             QMessageBox.information(self, "Loaded", f"Successfully loaded {len(plan_rows)} activity records.")
         except Exception as e:
