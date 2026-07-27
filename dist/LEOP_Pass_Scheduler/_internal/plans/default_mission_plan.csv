@@ -1,3 +1,0 @@
-﻿Sat_ID,Main,Sub,Min_El,Required_Cap,Min_Duration,Pre_Req_Main,Sequence_ID
-SAT_A,First Contact,TM 확인 / Panel 전개,10,CMD,300,NONE,1
-SAT_A,Health check,EPS / AOCS 상태 점검,10,NONE,180,First Contact,2
