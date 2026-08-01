@@ -9,6 +9,14 @@ from core.exporter import export_constraints_to_csv, export_constraints_to_excel
 from core.plan_parser import load_plan_file, save_plan_to_yaml, PLAN_HEADERS
 
 class ConstraintsPlannerTab(QWidget):
+    """
+    Tab 2: 미션 제약 조건 플래너 UI 클래스
+    
+    [기능 설명]
+    - 미션 활동 제약 조건(Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID)을
+      그리드 표 형태로 직접 생성, 편집, 조회합니다.
+    - YAML, Excel, CSV 형식을 통합 지원하며 Remark (운용 상세 설명) 입력을 지원합니다.
+    """
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -25,7 +33,7 @@ class ConstraintsPlannerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
-        # 🔥 YAML 지원 문구 반영
+        # 1. 상단 파일 로드 및 편집 버튼 구역
         self.btn_import_plan_file = QPushButton("📂 Load Constraint File (YAML / Excel / CSV)")
         self.btn_import_plan_file.setStyleSheet("font-weight: bold; padding: 6px; background-color: #2E7D32; color: white;")
         self.btn_import_plan_file.clicked.connect(self.click_import_constraints)
@@ -46,11 +54,18 @@ class ConstraintsPlannerTab(QWidget):
         top_ctrl.addStretch()
         layout.addLayout(top_ctrl)
         
+        # 2. 미션 제약 조건 테이블 (9개 컬럼: Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID)
         self.plan_table = QTableWidget()
         self.plan_table.setColumnCount(len(self.plan_headers_labels))
         self.plan_table.setHorizontalHeaderLabels(self.plan_headers_labels)
         self.plan_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.plan_table.horizontalHeader().setDefaultSectionSize(140)
+        self.plan_table.horizontalHeader().setDefaultSectionSize(130)
+        
+        # Main, Sub, Remark 컬럼 유연 가변 확장 (인덱스 1, 2, 3)
+        self.plan_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.plan_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.plan_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        
         self.plan_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.plan_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.plan_table.setWordWrap(True)
@@ -60,6 +75,7 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.itemChanged.connect(self.handle_cell_changed)
         self.plan_table.itemDoubleClicked.connect(self.handle_cell_double_clicked)
         
+        # 3. 하단 저장 옵션 컨트롤 패널
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Save Options:</b>"))
         
@@ -86,11 +102,12 @@ class ConstraintsPlannerTab(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
     def handle_cell_double_clicked(self, item):
-        if item.column() != 1 and item.column() != 2: return
+        """Main, Sub, Remark 셀 더블클릭 시 멀티라인 상세 편집 팝업 띄우기"""
+        if item.column() not in [1, 2, 3]: return
             
         dialog = QDialog(self)
         dialog.setWindowTitle("Edit Activity Detail")
-        dialog.setMinimumSize(400, 200)
+        dialog.setMinimumSize(420, 220)
         
         dialog_layout = QVBoxLayout(dialog)
         dialog_layout.addWidget(QLabel("<b>Enter Details (Multi-line supported):</b>"))
@@ -110,19 +127,20 @@ class ConstraintsPlannerTab(QWidget):
             self.plan_table.resizeRowsToContents()
 
     def click_import_constraints(self):
-        # YAML, Excel, CSV 모두 포함된 필터
+        """Constraint 파일 (YAML, Excel, CSV) 파싱 후 테이블에 로드"""
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Constraints File", self.plans_dir, "Supported Files (*.yaml *.yml *.xlsx *.csv)"
         )
         if not path: return
         try:
-            plan_rows = load_plan_file(path) # 확장자 분기 자동 로딩
+            plan_rows = load_plan_file(path)
             self.populate_plan_table_ui(plan_rows)
             QMessageBox.information(self, "Loaded", f"Successfully loaded {len(plan_rows)} activity records.")
         except Exception as e:
             QMessageBox.critical(self, "Parser Error", f"Failed to load constraints data:\n{str(e)}")
 
     def populate_plan_table_ui(self, plan_rows):
+        """파싱된 미션 활동 데이터를 테이블 UI에 바인딩 및 파스텔 배경색 설정"""
         self.plan_table.setRowCount(0)
         self.plan_table.blockSignals(True)
         self.plan_table.setRowCount(len(plan_rows))
@@ -141,6 +159,7 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.blockSignals(False)
 
     def handle_cell_changed(self, item):
+        """Sat_ID(첫 번째 열) 셀 수정 시 해당 행 전체 파스텔 배경색 즉시 변경"""
         if item is None or item.column() != 0: return
         row = item.row()
         sat_name = item.text().strip()
@@ -154,13 +173,15 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.blockSignals(False)
 
     def click_add_plan_row(self):
+        """기본값이 입력된 새로운 태스크 제약 조건 행 추가 (Remark 항목 포함 9개 값)"""
         curr_idx = self.plan_table.rowCount()
         self.plan_table.blockSignals(True)
         self.plan_table.insertRow(curr_idx)
         from core.color_manager import color_manager
         _, default_sat_color = color_manager.get_colors("SAT_A")
         
-        default_row = ["SAT_A", "NEW_MAIN", "NEW_SUB", "10", "CMD", "180", "NONE", str(curr_idx + 1)]
+        # [Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID]
+        default_row = ["SAT_A", "NEW_MAIN", "NEW_SUB", "Standard pass operation note", "10", "CMD", "180", "NONE", str(curr_idx + 1)]
         for col_idx, text in enumerate(default_row):
             item = QTableWidgetItem(text)
             item.setBackground(default_sat_color)
@@ -169,6 +190,7 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.blockSignals(False)
 
     def click_delete_plan_row(self):
+        """선택된 행(들) 삭제"""
         selected_ranges = self.plan_table.selectedRanges()
         if not selected_ranges: return
         rows_to_delete = {r for r_range in selected_ranges for r in range(r_range.topRow(), r_range.bottomRow() + 1)}
@@ -178,6 +200,7 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.blockSignals(False)
 
     def extract_plan_data_from_ui_grid(self):
+        """UI 표에 입력된 데이터를 딕셔너리 리스트 형태로 추출"""
         row_count = self.plan_table.rowCount()
         extracted_data = []
         for r in range(row_count):
@@ -189,6 +212,7 @@ class ConstraintsPlannerTab(QWidget):
         return extracted_data
 
     def click_save_plan_file(self, format_type):
+        """추출된 데이터를 지정된 형식(YAML, CSV, EXCEL)으로 내보내기"""
         extracted_data = self.extract_plan_data_from_ui_grid()
         if not extracted_data: return
         if format_type == "YAML":

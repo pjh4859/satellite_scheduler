@@ -156,11 +156,11 @@ def export_to_excel_with_color(file_path, passes_list):
 
 
 # ==============================================================================
-# Tab 2: 미션 제약 조건 내보내기 함수들
+# Tab 2: 미션 제약 조건 내보내기 함수들 (Remark 추가)
 # ==============================================================================
 def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
     """
-    Tab 2 제약 조건 목록을 CSV 파일로 내보내기
+    Tab 2 제약 조건 목록을 CSV 파일로 내보내기 (Remark 항목 추가)
     """
     with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
@@ -170,6 +170,7 @@ def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
                 data.get("sat_id", data.get("satellite", "")),
                 data.get("main", data.get("activity", "")),
                 data.get("sub", ""),
+                data.get("remark", data.get("remarks", data.get("note", ""))),  # 👈 Remark 추가
                 data.get("min_el", ""),
                 data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
                 data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
@@ -180,7 +181,7 @@ def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
 
 def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_labels):
     """
-    Tab 2 제약 조건 목록을 위성별 색상이 구분된 Excel 파일로 내보내기
+    Tab 2 제약 조건 목록을 위성별 색상이 구분된 Excel 파일로 내보내기 (Remark 항목 추가)
     """
     try:
         wb = Workbook()
@@ -203,6 +204,7 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
                 data.get("sat_id", data.get("satellite", "")),
                 data.get("main", data.get("activity", "")),
                 data.get("sub", ""),
+                data.get("remark", data.get("remarks", data.get("note", ""))),  # 👈 Remark 추가
                 data.get("min_el", ""),
                 data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
                 data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
@@ -236,26 +238,26 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
 
 
 # ==============================================================================
-# Tab 3: 최종 통합 스케줄 내보내기 함수들 (모드별 색상 구분)
+# Tab 3: 최종 통합 스케줄 내보내기 함수들 (Remark 항목 추가 & 모드별 색상 구분)
 # ==============================================================================
 def export_final_schedule_to_csv(file_path, final_data):
     """
-    Tab 3 최종 산출 스케줄을 CSV 파일로 내보내기
+    Tab 3 최종 산출 스케줄을 CSV 파일로 내보내기 (Remark 열 추가)
     """
     with open(file_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity"])
+        writer.writerow(["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity", "Remark"])
         for item in final_data:
             writer.writerow([
                 item["station"], item["satellite"], item["pass_no"],
                 item["aos"], item["los"], item["duration"], item["max_el"],
-                item["status"], item["activity"]
+                item["status"], item["activity"], item.get("remark", "")  # 👈 Remark 추가
             ])
 
 
 def export_final_schedule_to_excel(file_path, final_data, color_mode):
     """
-    Tab 3 최종 통합 스케줄을 Excel 파일로 내보내기
+    Tab 3 최종 통합 스케줄을 Excel 파일로 내보내기 (Remark 열 추가)
     
     [기능 설명]
     - color_mode="STATION": 지상국 기준으로 파스텔 색상을 다르게 채워 구분합니다.
@@ -268,7 +270,7 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
         ws = wb.active
         ws.title = "Final Integrated Schedule"
         
-        headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity"]
+        headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity", "Remark"]
         ws.append(headers)
         
         # 네이비 파란색 헤더 디자인
@@ -285,7 +287,7 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
             ws.append([
                 item["station"], item["satellite"], item["pass_no"],
                 item["aos"], item["los"], item["duration"], item["max_el"],
-                item["status"], item["activity"]
+                item["status"], item["activity"], item.get("remark", "")  # 👈 Remark 추가
             ])
             
             # 모드별(지상국 vs 위성) 정확한 파스텔 색상 매핑

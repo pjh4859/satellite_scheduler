@@ -1,68 +1,79 @@
-# core/color_manager.py
+import re
 from PyQt6.QtGui import QColor
 
-class DynamicColorManager:
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(DynamicColorManager, cls).__new__(cls)
-            cls._instance.sat_color_map = {}
-            cls._instance.station_color_map = {}
-            
-            # 🎨 1. 위성 전용: 가시성 및 채도가 뚜렷하게 명시된 프리미엄 파스텔 풀
-            cls._instance.sat_pastel_pool = [
-                ("EBFDEB", QColor(235, 253, 235)),  # 민트 그린
-                ("F2E6FF", QColor(242, 230, 255)),  # 소프트 퍼플/라벤더
-                ("FFFBF0", QColor(255, 251, 240)),  # 베이지 크림
-                ("E6F7FA", QColor(230, 247, 250)),  # 파스텔 아쿠아
-                ("FFFDE6", QColor(255, 253, 230)),  # 레몬 옐로우
-                ("FFF0F2", QColor(255, 240, 242)),  # 피치 핑크
-            ]
-            
-            # 🎨 2. 지상국 전용: 텍스트 가시성이 우수하고 상호 구분이 뚜렷한 파스텔 풀
-            cls._instance.station_pastel_pool = [
-                ("E6F2FF", QColor(230, 242, 255)),  # 소프트 스카이 블루
-                ("FFEBE6", QColor(255, 235, 230)),  # 소프트 피치/세이지
-                ("E6FDE6", QColor(230, 253, 230)),  # 라이트 애플 그린
-                ("FBF0FF", QColor(251, 240, 255)),  # 라벤더 로즈
-                ("FEFCE8", QColor(254, 252, 232)),  # 크림 옐로우
-                ("CCFBF1", QColor(204, 251, 241)),  # 아쿠아 민트
-            ]
-            
-            cls._instance.sat_index = 0
-            cls._instance.station_index = 0
-            
-        return cls._instance
+class ColorManager:
+    """
+    위성 및 지상국 고유 파스텔 색상 관리자 (20종 고대비 팔레트 & 정규화 키 고정 매핑)
+    """
+    def __init__(self):
+        # 20가지 고대비 위성 전용 파스텔 팔레트 (HEX)
+        self.pastel_palette = [
+            "E3F2FD",  # Soft Light Blue
+            "F3E5F5",  # Soft Purple
+            "E8F5E9",  # Soft Mint Green
+            "FFF3E0",  # Soft Orange
+            "FCE4EC",  # Soft Pink
+            "E0F7FA",  # Soft Cyan
+            "FFFDE7",  # Soft Yellow
+            "E8EAF6",  # Soft Indigo
+            "E0F2F1",  # Soft Teal
+            "FFF8E1",  # Soft Amber
+            "FFEBEE",  # Soft Red/Rose
+            "F1F8E9",  # Soft Lime Green
+            "EDE7F6",  # Soft Deep Purple
+            "EFEBE9",  # Soft Brown/Taupe
+            "F5F5F5",  # Soft Light Gray
+            "E1F5FE",  # Soft Sky Blue
+            "F48FB1",  # Soft Flamingo
+            "C8E6C9",  # Soft Pastel Green
+            "FFE0B2",  # Soft Peach
+            "D1C4E9"   # Soft Lavender
+        ]
+        
+        # 20가지 고대비 지상국 전용 파스텔 팔레트 (HEX)
+        self.station_palette = [
+            "E8EAF6", "E0F2F1", "FFF3E0", "F3E5F5", "E8F5E9", "FCE4EC", "E0F7FA",
+            "FFFDE7", "E3F2FD", "FFF8E1", "FFEBEE", "F1F8E9", "EDE7F6", "E1F5FE",
+            "FFE0B2", "C8E6C9", "D1C4E9", "F48FB1", "EFEBE9", "DCEDC8"
+        ]
+
+        self.sat_color_map = {}
+        self.station_color_map = {}
+
+    def _normalize_key(self, text):
+        """특수문자 및 괄호 제거를 통한 고유 키 정규화"""
+        if not text: return ""
+        clean = str(text).split("(")[0].strip()
+        clean = re.sub(r'[^A-Za-z0-9]', '', clean).upper()
+        return clean
 
     def get_colors(self, sat_name):
-        """위성 이름 기반 명확한 고대비 파스텔 색상 반환"""
-        key = str(sat_name).strip().upper()
-        if not key or key in ["NONE", "NULL", "N/A"]:
-            return "FFFFFF", QColor(255, 255, 255)
-            
-        if key in self.sat_color_map:
-            return self.sat_color_map[key]
-            
-        # 순차 연산 순환 배정 (랜덤 미사용)
-        chosen = self.sat_pastel_pool[self.sat_index % len(self.sat_pastel_pool)]
-        self.sat_index += 1
-        self.sat_color_map[key] = chosen
-        return chosen
+        """정규화된 위성 키 기준 20가지 고유 파스텔 색상 1:1 고정 반환"""
+        sat_key = self._normalize_key(sat_name)
+        if not sat_key:
+            return "F5F5F5", QColor(245, 245, 245)
+
+        if sat_key not in self.sat_color_map:
+            color_index = len(self.sat_color_map) % len(self.pastel_palette)
+            self.sat_color_map[sat_key] = self.pastel_palette[color_index]
+
+        hex_code = self.sat_color_map[sat_key]
+        r, g, b = int(hex_code[0:2], 16), int(hex_code[2:4], 16), int(hex_code[4:6], 16)
+        return hex_code, QColor(r, g, b)
 
     def get_station_colors(self, station_name):
-        """지상국 이름 기반 명확한 고대비 파스텔 색상 반환"""
-        key = str(station_name).strip().upper()
-        if not key or key in ["NONE", "NULL", "N/A"]:
-            return "FFFFFF", QColor(255, 255, 255)
-            
-        if key in self.station_color_map:
-            return self.station_color_map[key]
-            
-        # 순차 연산 순환 배정 (랜덤 미사용)
-        chosen = self.station_pastel_pool[self.station_index % len(self.station_pastel_pool)]
-        self.station_index += 1
-        self.station_color_map[key] = chosen
-        return chosen
+        """정규화된 지상국 키 기준 20가지 고유 파스텔 색상 1:1 고정 반환"""
+        st_key = self._normalize_key(station_name)
+        if not st_key:
+            return "F5F5F5", QColor(245, 245, 245)
 
-color_manager = DynamicColorManager()
+        if st_key not in self.station_color_map:
+            color_index = len(self.station_color_map) % len(self.station_palette)
+            self.station_color_map[st_key] = self.station_palette[color_index]
+
+        hex_code = self.station_color_map[st_key]
+        r, g, b = int(hex_code[0:2], 16), int(hex_code[2:4], 16), int(hex_code[4:6], 16)
+        return hex_code, QColor(r, g, b)
+
+# 싱글톤 인스턴스
+color_manager = ColorManager()

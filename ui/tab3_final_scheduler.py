@@ -11,7 +11,20 @@ from core.color_manager import color_manager
 from core.exporter import export_final_schedule_to_csv, export_final_schedule_to_excel
 from core.plan_parser import normalize_sat_name
 
+
+# ==============================================================================
+# [메인 탭] Tab 3: LEOP 시퀀스 및 제약 조건 기반 최종 미션 통합 스케줄러
+# ==============================================================================
 class FinalSchedulerTab(QWidget):
+    """
+    Tab 3 메인 UI 및 스케줄링 컴파일 엔진 클래스
+    
+    [기능 설명]
+    - Tab 1의 패스 예측 결과(.yaml)와 Tab 2의 미션 제약 조건(.yaml)을 로드합니다.
+    - 안테나 기능(CMD/DOWN), 최소 고도각, 최소 교신 시간, 선행 작업(Pre-req), 
+      위성 간 단계 격차 제한(Max Step Lead)을 검증하여 최종 미션을 할당(Allocated/Bypassed/Idle)합니다.
+    - 미션 설명(Remark) 컬럼이 포함된 10개 컬럼 그리드 및 파스텔톤 색상 렌더링을 제공합니다.
+    """
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -19,6 +32,7 @@ class FinalSchedulerTab(QWidget):
         self.pass_output_dir = "pass_output"
         self.final_output_dir = "final_output"
         
+        # 기본 디렉토리 자동 생성
         if not os.path.exists(self.plans_dir): os.makedirs(self.plans_dir)
         if not os.path.exists(self.pass_output_dir): os.makedirs(self.pass_output_dir)
         if not os.path.exists(self.final_output_dir): os.makedirs(self.final_output_dir)
@@ -32,6 +46,9 @@ class FinalSchedulerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
+        # ----------------------------------------------------------------------
+        # 1. 상단 컨트롤 패널 (파일 로드, Max Lead 설정, 색상 모드)
+        # ----------------------------------------------------------------------
         self.btn_load_pass = QPushButton("📂 Load Tab1 Passes (.yaml)")
         self.btn_load_pass.setStyleSheet("font-weight: bold; padding: 5px;")
         self.btn_load_pass.clicked.connect(self.click_load_pass_yaml)
@@ -53,6 +70,7 @@ class FinalSchedulerTab(QWidget):
         top_ctrl.addWidget(self.btn_open_plan_folder)
         
         top_ctrl.addSpacing(15)
+        
         top_ctrl.addWidget(QLabel("<b>Max Step Lead:</b>"))
         self.spin_max_lead = QSpinBox()
         self.spin_max_lead.setRange(1, 20)
@@ -71,8 +89,10 @@ class FinalSchedulerTab(QWidget):
         top_ctrl.addWidget(self.btn_generate_final)
         
         top_ctrl.addSpacing(20)
+        
         top_ctrl.addWidget(QLabel("<b>🎨 Color Mode:</b>"))
         self.color_group = QButtonGroup(self)
+        
         self.radio_station = QRadioButton("Station Standard")
         self.radio_station.setChecked(True)
         self.radio_station.toggled.connect(self.refresh_table_colors)
@@ -87,20 +107,29 @@ class FinalSchedulerTab(QWidget):
         top_ctrl.addStretch()
         layout.addLayout(top_ctrl)
         
+        # ----------------------------------------------------------------------
+        # 2. 중앙 최종 스케줄 그리드 테이블 (Remark 포함 10개 컬럼)
+        # ----------------------------------------------------------------------
         self.final_table = QTableWidget()
-        self.final_table.setColumnCount(9)
+        self.final_table.setColumnCount(10)
         self.final_table.setHorizontalHeaderLabels([
             "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS (UTC)", 
-            "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status", "💡 Mission Activity"
+            "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status", "💡 Mission Activity", "📝 Remark / Notes"
         ])
         self.final_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.final_table.horizontalHeader().setDefaultSectionSize(145)
+        self.final_table.horizontalHeader().setDefaultSectionSize(130)
+        self.final_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        self.final_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
         self.final_table.setWordWrap(True)
         self.final_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.final_table)
         
+        # ----------------------------------------------------------------------
+        # 3. 하단 컨트롤 패널 (CSV / Excel 저장)
+        # ----------------------------------------------------------------------
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Export Options:</b>"))
+        
         self.btn_export_csv = QPushButton("Export Final Schedule to CSV")
         self.btn_export_csv.clicked.connect(self.click_export_csv)
         bottom_ctrl.addWidget(self.btn_export_csv)
@@ -117,13 +146,20 @@ class FinalSchedulerTab(QWidget):
         bottom_ctrl.addStretch()
         layout.addLayout(bottom_ctrl)
 
+    # --------------------------------------------------------------------------
+    # 파일 탐색기 열기 유틸리티
+    # --------------------------------------------------------------------------
     def open_local_folder(self, folder_path):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         abs_path = os.path.abspath(folder_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
+    # --------------------------------------------------------------------------
+    # YAML 데이터 로드 및 준비 상태 업데이트
+    # --------------------------------------------------------------------------
     def click_load_pass_yaml(self):
+        """Tab 1의 패스 예측 결과 YAML 로드"""
         path, _ = QFileDialog.getOpenFileName(self, "Select Tab1 Predicted Passes YAML", self.pass_output_dir, "YAML Files (*.yaml)")
         if not path: return
         try:
@@ -136,6 +172,7 @@ class FinalSchedulerTab(QWidget):
             QMessageBox.critical(self, "Load Error", f"Failed to parse Pass YAML:\n{str(e)}")
 
     def click_load_constraints_yaml(self):
+        """Tab 2의 미션 제약 조건 YAML 로드"""
         path, _ = QFileDialog.getOpenFileName(self, "Select Tab2 Mission Constraints YAML", self.plans_dir, "YAML Files (*.yaml)")
         if not path: return
         try:
@@ -152,6 +189,7 @@ class FinalSchedulerTab(QWidget):
             QMessageBox.critical(self, "Load Error", f"Failed to parse Constraints YAML:\n{str(e)}")
 
     def update_input_readiness(self):
+        """두 YAML 파일이 모두 정상 로드되었는지 확인하고 버튼 활성화"""
         if self.raw_pass_data is not None and self.raw_constraint_data is not None:
             self.lbl_status.setText("🟢 Ready to Compile")
             self.lbl_status.setStyleSheet("color: #2E7D32; font-weight: bold; margin-left: 10px; margin-right: 10px;")
@@ -161,6 +199,9 @@ class FinalSchedulerTab(QWidget):
             self.lbl_status.setStyleSheet("color: #D32F2F; font-weight: bold; margin-left: 10px; margin-right: 10px;")
             self.btn_generate_final.setEnabled(False)
 
+    # --------------------------------------------------------------------------
+    # [핵심 엔진] LEOP 미션 시퀀스 및 제약 조건 검증 매핑 (Remark 반영)
+    # --------------------------------------------------------------------------
     def click_generate_schedule(self):
         if not self.raw_pass_data or self.raw_constraint_data is None: return
             
@@ -186,17 +227,18 @@ class FinalSchedulerTab(QWidget):
                     
                 main_title = str(act.get("main", act.get("activity", ""))).strip()
                 sub_title = str(act.get("sub", "")).strip()
+                remark_text = str(act.get("remark", act.get("remarks", act.get("note", "")))).strip()
                 
                 raw_seq = act.get("sequence_id", act.get("activity_sequence_id", len(sat_plans[norm_sat]) + 1))
                 try: seq_id = int(raw_seq)
-                except: seq_id = len(sat_plans[norm_sat]) + 1
+                except Exception: seq_id = len(sat_plans[norm_sat]) + 1
                 
                 try: min_el = float(act.get("min_el", 0.0))
-                except: min_el = 0.0
+                except Exception: min_el = 0.0
                 
                 raw_dur = act.get("min_dur", act.get("min_duration", act.get("min_pass_contact", 0.0)))
                 try: min_dur = float(raw_dur)
-                except: min_dur = 0.0
+                except Exception: min_dur = 0.0
                 
                 req_cap = str(act.get("req_cap", act.get("required_cap", act.get("x_band_req", "NONE")))).strip().upper()
                 if req_cap == 'Y': req_cap = 'DOWN'
@@ -205,7 +247,7 @@ class FinalSchedulerTab(QWidget):
                 pre_req = str(act.get("pre_req_main", act.get("pre_activity_sequence_id", "NONE"))).strip()
 
                 sat_plans[norm_sat].append({
-                    "main": main_title, "sub": sub_title, "sequence_id": seq_id,
+                    "main": main_title, "sub": sub_title, "remark": remark_text, "sequence_id": seq_id,
                     "min_el": min_el, "min_dur": min_dur, "req_cap": req_cap, "pre_req_main": pre_req
                 })
 
@@ -240,7 +282,7 @@ class FinalSchedulerTab(QWidget):
                         "station": p.get("station", ""), "satellite": p_sat_full,
                         "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
                         "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
-                        "status": p.get("status", "Normal"), "activity": "N/A (No Plan)"
+                        "status": p.get("status", "Normal"), "activity": "N/A (No Plan)", "remark": ""
                     })
                     continue
 
@@ -252,7 +294,7 @@ class FinalSchedulerTab(QWidget):
                         "station": p.get("station", ""), "satellite": p_sat_full,
                         "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
                         "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
-                        "status": "Idle", "activity": "Standby / Idle Operations"
+                        "status": "Idle", "activity": "Standby / Idle Operations", "remark": ""
                     })
                     continue
 
@@ -296,7 +338,8 @@ class FinalSchedulerTab(QWidget):
                     "station": p.get("station", ""), "satellite": p_sat_full,
                     "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
                     "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
-                    "status": status_text, "activity": assigned_text
+                    "status": status_text, "activity": assigned_text,
+                    "remark": next_task.get("remark", "")
                 })
 
             self.populate_final_table_ui()
@@ -305,7 +348,11 @@ class FinalSchedulerTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Engine Error", f"Failed to execute LEOP schedule:\n{str(e)}")
 
+    # --------------------------------------------------------------------------
+    # UI 표 세팅 및 파스텔톤 색상 바인딩 (10개 컬럼)
+    # --------------------------------------------------------------------------
     def populate_final_table_ui(self):
+        """계산된 스케줄 데이터를 UI 테이블(10개 컬럼)에 출력"""
         self.final_table.setRowCount(0)
         self.final_table.setRowCount(len(self.final_schedule_data))
         for row_idx, item in enumerate(self.final_schedule_data):
@@ -318,10 +365,11 @@ class FinalSchedulerTab(QWidget):
             self.final_table.setItem(row_idx, 6, QTableWidgetItem(str(item["max_el"])))
             self.final_table.setItem(row_idx, 7, QTableWidgetItem(item["status"]))
             self.final_table.setItem(row_idx, 8, QTableWidgetItem(item["activity"]))
+            self.final_table.setItem(row_idx, 9, QTableWidgetItem(item.get("remark", "")))
         self.refresh_table_colors()
 
     def refresh_table_colors(self):
-        """🔥 [완벽 보완]: 정규화된 키를 사용하여 지상국별 / 위성별 고유 파스텔톤 일괄 배정"""
+        """지상국/위성 파스텔톤 배경색 일괄 적용 (10개 셀 전체)"""
         row_count = self.final_table.rowCount()
         if row_count == 0: return
         
@@ -342,7 +390,11 @@ class FinalSchedulerTab(QWidget):
                 cell = self.final_table.item(r, c)
                 if cell: cell.setBackground(chosen_color)
 
+    # --------------------------------------------------------------------------
+    # CSV / Excel 저장 이벤트 핸들러
+    # --------------------------------------------------------------------------
     def click_export_csv(self):
+        """최종 산출 결과를 CSV 파일로 내보내기"""
         if not self.final_schedule_data: return
         path, _ = QFileDialog.getSaveFileName(self, "Save Final Integrated CSV", self.final_output_dir, "CSV Files (*.csv)")
         if path:
@@ -350,6 +402,7 @@ class FinalSchedulerTab(QWidget):
             QMessageBox.information(self, "Export Success", "CSV Timeline exported successfully to final_output.")
 
     def click_export_excel(self):
+        """최종 산출 결과를 현재 지정된 색상 모드가 적용된 Excel 파일로 내보내기"""
         if not self.final_schedule_data: return
         path, _ = QFileDialog.getSaveFileName(self, "Save Final Integrated Excel", self.final_output_dir, "Excel Files (*.xlsx)")
         if path:
