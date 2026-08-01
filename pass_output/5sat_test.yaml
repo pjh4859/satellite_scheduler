@@ -1,0 +1,563 @@
+generation_timestamp: '2026-08-01T13:00:14.565765+00:00'
+total_passes_count: 70
+predicted_passes:
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 2
+  aos: '2026-10-14 04:29:17'
+  los: '2026-10-14 04:37:50'
+  duration_sec: 512.8
+  max_elevation_deg: 13.85
+  status: Conflict (Grp 1)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 2
+  aos: '2026-10-14 05:21:48'
+  los: '2026-10-14 05:31:30'
+  duration_sec: 582.0
+  max_elevation_deg: 20.08
+  status: Conflict (Grp 2)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 3
+  aos: '2026-10-14 06:05:10'
+  los: '2026-10-14 06:14:05'
+  duration_sec: 534.8
+  max_elevation_deg: 16.04
+  status: Conflict (Grp 3)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 3
+  aos: '2026-10-14 07:00:32'
+  los: '2026-10-14 07:11:29'
+  duration_sec: 656.5
+  max_elevation_deg: 35.76
+  status: Conflict (Grp 4)
+- station: King Sejong
+  satellite: NEONSAT-4(90003)
+  pass_no: 4
+  aos: '2026-10-14 07:41:12'
+  los: '2026-10-14 07:51:49'
+  duration_sec: 637.3
+  max_elevation_deg: 31.09
+  status: Conflict (Grp 5)
+- station: Jeju
+  satellite: NEONSAT-6(90005)
+  pass_no: 4
+  aos: '2026-10-14 08:24:11'
+  los: '2026-10-14 08:33:31'
+  duration_sec: 559.7
+  max_elevation_deg: 14.83
+  status: Conflict (Grp 6)
+- station: Daejeon
+  satellite: NEONSAT-2(90001)
+  pass_no: 4
+  aos: '2026-10-14 08:24:59'
+  los: '2026-10-14 08:35:04'
+  duration_sec: 604.4
+  max_elevation_deg: 18.25
+  status: Conflict (Grp 7)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 4
+  aos: '2026-10-14 08:38:59'
+  los: '2026-10-14 08:50:36'
+  duration_sec: 697.1
+  max_elevation_deg: 61.63
+  status: Conflict (Grp 8)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 5
+  aos: '2026-10-14 09:19:00'
+  los: '2026-10-14 09:30:36'
+  duration_sec: 696.0
+  max_elevation_deg: 82.27
+  status: Conflict (Grp 9)
+- station: Jeju
+  satellite: NEONSAT-6(90005)
+  pass_no: 5
+  aos: '2026-10-14 09:59:35'
+  los: '2026-10-14 10:12:53'
+  duration_sec: 798.1
+  max_elevation_deg: 70.78
+  status: Conflict (Grp 10)
+- station: Daejeon
+  satellite: NEONSAT-2(90001)
+  pass_no: 5
+  aos: '2026-10-14 10:01:05'
+  los: '2026-10-14 10:14:05'
+  duration_sec: 779.7
+  max_elevation_deg: 59.49
+  status: Conflict (Grp 11)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 5
+  aos: '2026-10-14 10:17:18'
+  los: '2026-10-14 10:29:07'
+  duration_sec: 709.5
+  max_elevation_deg: 86.3
+  status: Conflict (Grp 12)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 6
+  aos: '2026-10-14 10:58:47'
+  los: '2026-10-14 11:08:29'
+  duration_sec: 582.0
+  max_elevation_deg: 20.57
+  status: Conflict (Grp 13)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 6
+  aos: '2026-10-14 11:55:27'
+  los: '2026-10-14 12:07:25'
+  duration_sec: 717.8
+  max_elevation_deg: 86.2
+  status: Conflict (Grp 14)
+- station: Svalbard
+  satellite: NEONSAT-2(90001)
+  pass_no: 7
+  aos: '2026-10-14 13:34:25'
+  los: '2026-10-14 13:46:13'
+  duration_sec: 708.7
+  max_elevation_deg: 81.65
+  status: Conflict (Grp 15)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 8
+  aos: '2026-10-14 15:12:08'
+  los: '2026-10-14 15:24:13'
+  duration_sec: 725.6
+  max_elevation_deg: 56.2
+  status: Conflict (Grp 16)
+- station: Svalbard
+  satellite: NEONSAT-2(90001)
+  pass_no: 9
+  aos: '2026-10-14 16:52:12'
+  los: '2026-10-14 17:03:25'
+  duration_sec: 672.6
+  max_elevation_deg: 32.49
+  status: Conflict (Grp 17)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 10
+  aos: '2026-10-14 18:31:34'
+  los: '2026-10-14 18:41:37'
+  duration_sec: 602.9
+  max_elevation_deg: 19.03
+  status: Conflict (Grp 18)
+- station: Svalbard
+  satellite: NEONSAT-2(90001)
+  pass_no: 11
+  aos: '2026-10-14 20:14:03'
+  los: '2026-10-14 20:20:54'
+  duration_sec: 411.0
+  max_elevation_deg: 9.83
+  status: Conflict (Grp 19)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 12
+  aos: '2026-10-14 21:13:38'
+  los: '2026-10-14 21:20:36'
+  duration_sec: 417.8
+  max_elevation_deg: 9.11
+  status: Conflict (Grp 20)
+- station: Daejeon
+  satellite: NEONSAT-6(90005)
+  pass_no: 13
+  aos: '2026-10-14 22:09:23'
+  los: '2026-10-14 22:18:49'
+  duration_sec: 565.2
+  max_elevation_deg: 27.63
+  status: Conflict (Grp 21)
+- station: Jeju
+  satellite: NEONSAT-6(90005)
+  pass_no: 13
+  aos: '2026-10-14 22:10:14'
+  los: '2026-10-14 22:19:33'
+  duration_sec: 559.1
+  max_elevation_deg: 26.94
+  status: Conflict (Grp 22)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 13
+  aos: '2026-10-14 22:50:37'
+  los: '2026-10-14 23:03:04'
+  duration_sec: 747.0
+  max_elevation_deg: 34.61
+  status: Conflict (Grp 23)
+- station: Daejeon
+  satellite: NEONSAT-6(90005)
+  pass_no: 14
+  aos: '2026-10-14 23:47:38'
+  los: '2026-10-14 23:56:25'
+  duration_sec: 527.4
+  max_elevation_deg: 21.05
+  status: Conflict (Grp 24)
+- station: Jeju
+  satellite: NEONSAT-2(90001)
+  pass_no: 14
+  aos: '2026-10-14 23:49:24'
+  los: '2026-10-14 23:57:40'
+  duration_sec: 495.5
+  max_elevation_deg: 18.5
+  status: Conflict (Grp 25)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 14
+  aos: '2026-10-15 00:28:48'
+  los: '2026-10-15 00:41:54'
+  duration_sec: 786.7
+  max_elevation_deg: 74.08
+  status: Conflict (Grp 26)
+- station: King Sejong
+  satellite: NEONSAT-6(90005)
+  pass_no: 15
+  aos: '2026-10-15 02:06:23'
+  los: '2026-10-15 02:17:36'
+  duration_sec: 673.5
+  max_elevation_deg: 27.92
+  status: Conflict (Grp 27)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 15
+  aos: '2026-10-15 02:57:45'
+  los: '2026-10-15 03:03:08'
+  duration_sec: 322.7
+  max_elevation_deg: 7.86
+  status: Conflict (Grp 28)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 16
+  aos: '2026-10-15 03:44:57'
+  los: '2026-10-15 03:54:14'
+  duration_sec: 557.5
+  max_elevation_deg: 15.86
+  status: Conflict (Grp 29)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 16
+  aos: '2026-10-15 04:36:23'
+  los: '2026-10-15 04:44:59'
+  duration_sec: 515.3
+  max_elevation_deg: 14.88
+  status: Conflict (Grp 30)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 17
+  aos: '2026-10-15 05:21:43'
+  los: '2026-10-15 05:30:20'
+  duration_sec: 516.5
+  max_elevation_deg: 14.21
+  status: Conflict (Grp 31)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 17
+  aos: '2026-10-15 06:15:05'
+  los: '2026-10-15 06:25:31'
+  duration_sec: 625.5
+  max_elevation_deg: 27.12
+  status: Conflict (Grp 32)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 18
+  aos: '2026-10-15 06:57:40'
+  los: '2026-10-15 07:07:44'
+  duration_sec: 603.6
+  max_elevation_deg: 22.07
+  status: Conflict (Grp 33)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 18
+  aos: '2026-10-15 07:53:41'
+  los: '2026-10-15 08:05:01'
+  duration_sec: 679.4
+  max_elevation_deg: 48.18
+  status: Conflict (Grp 34)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 19
+  aos: '2026-10-15 08:34:18'
+  los: '2026-10-15 08:45:50'
+  duration_sec: 692.2
+  max_elevation_deg: 55.49
+  status: Conflict (Grp 35)
+- station: Jeju
+  satellite: NEONSAT-6(90005)
+  pass_no: 19
+  aos: '2026-10-15 09:14:57'
+  los: '2026-10-15 09:27:34'
+  duration_sec: 757.7
+  max_elevation_deg: 42.76
+  status: Conflict (Grp 36)
+- station: Daejeon
+  satellite: NEONSAT-2(90001)
+  pass_no: 19
+  aos: '2026-10-15 09:16:36'
+  los: '2026-10-15 09:29:15'
+  duration_sec: 759.9
+  max_elevation_deg: 51.84
+  status: Conflict (Grp 37)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 19
+  aos: '2026-10-15 09:32:06'
+  los: '2026-10-15 09:43:46'
+  duration_sec: 699.8
+  max_elevation_deg: 75.91
+  status: Conflict (Grp 38)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 20
+  aos: '2026-10-15 10:12:49'
+  los: '2026-10-15 10:23:58'
+  duration_sec: 669.4
+  max_elevation_deg: 39.44
+  status: Conflict (Grp 39)
+- station: Jeju
+  satellite: NEONSAT-6(90005)
+  pass_no: 20
+  aos: '2026-10-15 10:53:40'
+  los: '2026-10-15 11:05:01'
+  duration_sec: 680.5
+  max_elevation_deg: 22.7
+  status: Conflict (Grp 40)
+- station: Daejeon
+  satellite: NEONSAT-2(90001)
+  pass_no: 20
+  aos: '2026-10-15 10:55:53'
+  los: '2026-10-15 11:06:30'
+  duration_sec: 636.0
+  max_elevation_deg: 19.27
+  status: Conflict (Grp 41)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 20
+  aos: '2026-10-15 11:10:19'
+  los: '2026-10-15 11:22:08'
+  duration_sec: 708.5
+  max_elevation_deg: 87.22
+  status: Conflict (Grp 42)
+- station: King Sejong
+  satellite: NEONSAT-2(90001)
+  pass_no: 21
+  aos: '2026-10-15 11:54:37'
+  los: '2026-10-15 12:01:03'
+  duration_sec: 385.1
+  max_elevation_deg: 9.37
+  status: Conflict (Grp 43)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 21
+  aos: '2026-10-15 12:48:27'
+  los: '2026-10-15 13:00:19'
+  duration_sec: 712.5
+  max_elevation_deg: 89.64
+  status: Conflict (Grp 44)
+- station: Svalbard
+  satellite: NEONSAT-4(90003)
+  pass_no: 22
+  aos: '2026-10-15 14:26:31'
+  los: '2026-10-15 14:38:24'
+  duration_sec: 712.9
+  max_elevation_deg: 68.49
+  status: Conflict (Grp 45)
+- station: Svalbard
+  satellite: NEONSAT-3(90002)
+  pass_no: 23
+  aos: '2026-10-15 16:05:32'
+  los: '2026-10-15 16:17:05'
+  duration_sec: 693.1
+  max_elevation_deg: 42.17
+  status: Conflict (Grp 46)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 24
+  aos: '2026-10-15 17:45:17'
+  los: '2026-10-15 17:55:59'
+  duration_sec: 641.7
+  max_elevation_deg: 24.45
+  status: Conflict (Grp 47)
+- station: Svalbard
+  satellite: NEONSAT-4(90003)
+  pass_no: 25
+  aos: '2026-10-15 19:25:54'
+  los: '2026-10-15 19:34:21'
+  duration_sec: 507.2
+  max_elevation_deg: 13.42
+  status: Conflict (Grp 48)
+- station: Svalbard
+  satellite: NEONSAT-6(90005)
+  pass_no: 26
+  aos: '2026-10-15 21:08:27'
+  los: '2026-10-15 21:13:28'
+  duration_sec: 301.6
+  max_elevation_deg: 7.28
+  status: Normal
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 27
+  aos: '2026-10-15 22:04:43'
+  los: '2026-10-15 22:15:25'
+  duration_sec: 642.8
+  max_elevation_deg: 19.05
+  status: Conflict (Grp 49)
+- station: Daejeon
+  satellite: NEONSAT-5(90004)
+  pass_no: 28
+  aos: '2026-10-15 23:01:53'
+  los: '2026-10-15 23:12:06'
+  duration_sec: 613.6
+  max_elevation_deg: 70.17
+  status: Conflict (Grp 50)
+- station: Jeju
+  satellite: NEONSAT-4(90003)
+  pass_no: 28
+  aos: '2026-10-15 23:02:21'
+  los: '2026-10-15 23:12:28'
+  duration_sec: 607.3
+  max_elevation_deg: 68.37
+  status: Conflict (Grp 51)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 28
+  aos: '2026-10-15 23:42:32'
+  los: '2026-10-15 23:55:40'
+  duration_sec: 787.9
+  max_elevation_deg: 64.57
+  status: Conflict (Grp 52)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 29
+  aos: '2026-10-16 01:20:47'
+  los: '2026-10-16 01:33:15'
+  duration_sec: 748.1
+  max_elevation_deg: 43.38
+  status: Conflict (Grp 53)
+- station: King Sejong
+  satellite: NEONSAT-4(90003)
+  pass_no: 30
+  aos: '2026-10-16 02:58:43'
+  los: '2026-10-16 03:08:58'
+  duration_sec: 615.0
+  max_elevation_deg: 20.01
+  status: Conflict (Grp 54)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 30
+  aos: '2026-10-16 03:50:58'
+  los: '2026-10-16 03:57:59'
+  duration_sec: 420.6
+  max_elevation_deg: 10.67
+  status: Conflict (Grp 55)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 31
+  aos: '2026-10-16 04:36:13'
+  los: '2026-10-16 04:44:50'
+  duration_sec: 516.8
+  max_elevation_deg: 13.97
+  status: Conflict (Grp 56)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 31
+  aos: '2026-10-16 05:29:39'
+  los: '2026-10-16 05:39:08'
+  duration_sec: 569.4
+  max_elevation_deg: 19.96
+  status: Conflict (Grp 57)
+- station: King Sejong
+  satellite: NEONSAT-4(90003)
+  pass_no: 32
+  aos: '2026-10-16 06:12:13'
+  los: '2026-10-16 06:21:19'
+  duration_sec: 546.5
+  max_elevation_deg: 16.62
+  status: Conflict (Grp 58)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 32
+  aos: '2026-10-16 07:08:17'
+  los: '2026-10-16 07:19:06'
+  duration_sec: 648.6
+  max_elevation_deg: 36.22
+  status: Conflict (Grp 59)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 33
+  aos: '2026-10-16 07:48:27'
+  los: '2026-10-16 07:59:23'
+  duration_sec: 656.4
+  max_elevation_deg: 33.15
+  status: Conflict (Grp 60)
+- station: Jeju
+  satellite: NEONSAT-4(90003)
+  pass_no: 33
+  aos: '2026-10-16 08:31:21'
+  los: '2026-10-16 08:40:49'
+  duration_sec: 568.2
+  max_elevation_deg: 15.79
+  status: Conflict (Grp 61)
+- station: Daejeon
+  satellite: NEONSAT-5(90004)
+  pass_no: 33
+  aos: '2026-10-16 08:31:53'
+  los: '2026-10-16 08:42:19'
+  duration_sec: 626.4
+  max_elevation_deg: 19.99
+  status: Conflict (Grp 62)
+- station: Svalbard
+  satellite: NEONSAT-4(90003)
+  pass_no: 33
+  aos: '2026-10-16 08:46:24'
+  los: '2026-10-16 08:57:41'
+  duration_sec: 677.0
+  max_elevation_deg: 61.93
+  status: Conflict (Grp 63)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 34
+  aos: '2026-10-16 09:25:53'
+  los: '2026-10-16 09:37:33'
+  duration_sec: 699.4
+  max_elevation_deg: 77.82
+  status: Conflict (Grp 64)
+- station: Jeju
+  satellite: NEONSAT-5(90004)
+  pass_no: 34
+  aos: '2026-10-16 10:07:25'
+  los: '2026-10-16 10:20:30'
+  duration_sec: 785.6
+  max_elevation_deg: 63.21
+  status: Conflict (Grp 65)
+- station: Daejeon
+  satellite: NEONSAT-4(90003)
+  pass_no: 34
+  aos: '2026-10-16 10:07:49'
+  los: '2026-10-16 10:20:41'
+  duration_sec: 772.1
+  max_elevation_deg: 54.37
+  status: Conflict (Grp 66)
+- station: Svalbard
+  satellite: NEONSAT-3(90002)
+  pass_no: 34
+  aos: '2026-10-16 10:24:57'
+  los: '2026-10-16 10:36:22'
+  duration_sec: 684.9
+  max_elevation_deg: 87.03
+  status: Conflict (Grp 67)
+- station: King Sejong
+  satellite: NEONSAT-3(90002)
+  pass_no: 35
+  aos: '2026-10-16 11:05:45'
+  los: '2026-10-16 11:15:21'
+  duration_sec: 575.7
+  max_elevation_deg: 19.56
+  status: Conflict (Grp 68)
+- station: Svalbard
+  satellite: NEONSAT-5(90004)
+  pass_no: 35
+  aos: '2026-10-16 12:03:15'
+  los: '2026-10-16 12:14:58'
+  duration_sec: 702.6
+  max_elevation_deg: 86.35
+  status: Conflict (Grp 69)

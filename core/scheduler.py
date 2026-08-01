@@ -189,29 +189,21 @@ def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
 # ==============================================================================
 # [스케줄링 핵심 엔진] 패스 계산 및 동시 발사 균등 배정 알고리즘
 # ==============================================================================
-def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, start_pass_no=1, equalize_allocation=True):
+def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, 
+                     start_pass_no=1, equalize_allocation=True, 
+                     equalize_target_sats=None, min_pass_targets=None):
     """
     지상국 가시 패스 연산 및 군집/동시 발사 위성 Round-Robin 공평 배정 엔진
     
-    [기능 및 알고리즘 설명]
-    1. UTC Offset-Aware 시간대 검증: 입력된 시간의 타임존을 UTC로 통일하여 연산 오류를 방지합니다.
-    2. Skyfield SGP4 연산: 각 위성 및 지상국 위치 기반으로 AOS(진입), Max Elevation(최고 고도각), 
-       LOS(이탈) 시간을 정밀 산출합니다.
-    3. 시간 경합 그룹핑(Conflict Grouping): 동일 지상국 안테나 범위 내에서 통신 시간이 겹치는 
-       패스들을 하나의 Conflict Group으로 묶어냅니다.
-    4. Swarm Fair Distribution Algorithm (공평 배정):
-       - equalize_allocation=True 시: 과거 선택된 횟수가 적은 위성을 우선 배정 ➔ 
-         선택 횟수가 같으면 교신 시간(Duration)이 더 긴 패스를 우선 배정하여 
-         동시 발사 위성 간 교신 기회를 균등 분배합니다.
-       - equalize_allocation=False 시: 단순 교신 시간(Max Duration) 기준 배정.
+    [신규 파라미터 추가]
+    - equalize_target_sats (set/list): 균등 배정을 적용할 대상 위성 이름 목록 (None 시 전체 위성 대상)
+    - min_pass_targets (dict): 위성별 최소 필수 보장 패스 수량 (예: {'SAT-1': 2, 'SAT-2': 1})
     """
-    # 1. Datetime UTC 시간대 보정 (Offset-Naive / Offset-Aware 예외 방지)
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
     if end_dt.tzinfo is None:
         end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    # 2. Skyfield 천체 로더 초기화
     skyfield_dir = get_resource_path("skyfield_data")
     if not os.path.exists(skyfield_dir):
         skyfield_dir = os.path.abspath(".")
@@ -226,7 +218,6 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     stations = {cfg[0]: wgs84.latlon(cfg[1], cfg[2]) for cfg in station_configs}
     raw_passes = []
     
-    # 3. 위성별 지상국 가시 이벤트 연산
     for sat_key, sat_info in tle_data.items():
         if isinstance(sat_info, dict):
             lines = sat_info['lines']
@@ -248,17 +239,16 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
             times, events = satellite.find_events(gs_loc, t0, t1, altitude_degrees=min_el)
             current_pass = {}
             for t, event in zip(times, events):
-                if event == 0:  # AOS (Animate / Elevation > min_el)
+                if event == 0:
                     current_pass['aos'] = t.utc_datetime()
-                elif event == 1:  # Max Elevation Point
+                elif event == 1:
                     difference = satellite - gs_loc
                     alt, _, _ = difference.at(t).altaz()
                     current_pass['max_el'] = alt.degrees
-                elif event == 2 and 'aos' in current_pass:  # LOS (Loss of Signal)
+                elif event == 2 and 'aos' in current_pass:
                     current_pass['los'] = t.utc_datetime()
                     duration = (current_pass['los'] - current_pass['aos']).total_seconds()
                     
-                    # 최소 요구 교신 시간(min_dur) 필터링
                     if duration >= min_dur:
                         pass_no = get_orbit_number(current_pass['aos'], orbit_timeline, default_start_pass=start_pass_no)
                         raw_passes.append({
@@ -275,11 +265,10 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                         })
                     current_pass = {}
 
-    # 가시 패스가 하나도 없는 경우 안전 예외 반환
     if not raw_passes:
         return []
 
-    # 4. 동일 지상국 관점 시간 경합(Conflict Grouping) 도출
+    # 지상국별 시간 경합 그룹핑
     raw_groups = []
     for gs_name in stations.keys():
         station_passes = [p for p in raw_passes if p['station'] == gs_name]
@@ -290,7 +279,7 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                 current_group.append(p)
             else:
                 max_los_in_group = max(x['los'] for x in current_group)
-                if p['aos'] < max_los_in_group:  # 시간 오버랩 발생 시 경합 그룹으로 취합
+                if p['aos'] < max_los_in_group:
                     current_group.append(p)
                 else:
                     raw_groups.append(current_group)
@@ -301,33 +290,52 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     if not raw_groups:
         return []
 
-    # 경합 그룹별 시간순 정렬
     raw_groups.sort(key=lambda g: min(x['aos'] for x in g))
 
     calculated_passes = []
     group_counter = 0
     
-    # 위성별 누적 선택 횟수 트래커 (KeyError 방지 맵 구현)
+    # 위성별 누적 선택 횟수 트래커
     sat_selected_counts = {}
     for sat_key in tle_data.keys():
         clean_name = sat_key.split("(")[0].strip()
         sat_selected_counts[clean_name] = 0
 
-    # 5. 경합 해결 및 공평 배정 연산 (Equalize Sat Allocation)
+    # 파라미터 정제
+    if equalize_target_sats is None:
+        equalize_target_sats = set(sat_selected_counts.keys())
+    else:
+        equalize_target_sats = set(equalize_target_sats)
+
+    if min_pass_targets is None:
+        min_pass_targets = {}
+
+    # 경합 해결 및 고급 공평 배정 연산
     for g in raw_groups:
         if len(g) > 1:
             group_counter += 1
             
             if equalize_allocation:
-                # [Round-Robin 공평 배정 키 함수]: (1) 누적 할당 횟수 소수점 순 ➔ (2) Duration 내림차순
                 def fairness_sort_key(p):
                     sat_clean = p['satellite'].split("(")[0].strip()
-                    return (sat_selected_counts.get(sat_clean, 0), -p['duration'])
+                    is_target = sat_clean in equalize_target_sats
+                    
+                    curr_cnt = sat_selected_counts.get(sat_clean, 0)
+                    min_req = min_pass_targets.get(sat_clean, 0)
+                    
+                    # (1) 최소 요구 수량을 아직 채우지 못한 위성에게 최고 우선순위(0) 부여
+                    need_more = 0 if (is_target and curr_cnt < min_req) else 1
+                    
+                    # (2) 균등 대상 위성 여부 (대상 위성을 대상이 아닌 위성보다 우선 고려)
+                    target_flag = 0 if is_target else 1
+                    
+                    # (3) 현재 선택된 횟수 (오름차순)
+                    # (4) 교신 시간 Duration (내림차순)
+                    return (need_more, target_flag, curr_cnt, -p['duration'])
                 
                 sorted_candidates = sorted(g, key=fairness_sort_key)
                 winning_pass = sorted_candidates[0]
             else:
-                # [기본 Max Duration 배정]
                 winning_pass = max(g, key=lambda x: x['duration'])
 
             for p in g:
@@ -340,7 +348,6 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                     sat_clean = p['satellite'].split("(")[0].strip()
                     sat_selected_counts[sat_clean] = sat_selected_counts.get(sat_clean, 0) + 1
         else:
-            # 경합이 없는 단독 패스는 즉시 승인 및 카운트 누적
             for p in g:
                 p['selected'] = True
                 sat_clean = p['satellite'].split("(")[0].strip()
@@ -348,6 +355,5 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
                 
         calculated_passes.extend(g)
 
-    # 최종 시각 및 지상국 순으로 깔끔하게 정렬 후 반환
     calculated_passes.sort(key=lambda x: (x['aos'], x['station']))
     return calculated_passes

@@ -20,7 +20,64 @@ from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_n
 # 🔥 분리된 TLE Generator 팝업 다이얼로그 임포트
 from ui.dialog_tle_generator import TleFromSepVectorDialog
 
+class EqualizeConfigDialog(QDialog):
+    """균등 배정 대상 위성 선택 및 최소 패스 보장 수량 설정 다이얼로그"""
+    def __init__(self, detected_satellites, current_targets=None, current_min_passes=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙️ Sat Equalization & Min Pass Target Rules")
+        self.resize(480, 400)
+        self.detected_satellites = detected_satellites
+        self.targets = set(current_targets) if current_targets else set(detected_satellites)
+        self.min_passes = dict(current_min_passes) if current_min_passes else {sat: 1 for sat in detected_satellites}
+        self.init_ui()
 
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Configure Equalization & Min Pass Targets per Satellite:</b>"))
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Target Sat", "Satellite Name", "Min Required Passes"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        
+        self.table.setRowCount(len(self.detected_satellites))
+        for row, sat in enumerate(self.detected_satellites):
+            # 1. Target Checkbox
+            chk_item = QTableWidgetItem()
+            chk_item.setCheckState(Qt.CheckState.Checked if sat in self.targets else Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, chk_item)
+            
+            # 2. Sat Name
+            self.table.setItem(row, 1, QTableWidgetItem(sat))
+            
+            # 3. Min Pass SpinBox
+            spin = QSpinBox()
+            spin.setRange(0, 100)
+            spin.setValue(self.min_passes.get(sat, 1))
+            self.table.setCellWidget(row, 2, spin)
+            
+        layout.addWidget(self.table)
+        
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(self.accept_config)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+    def accept_config(self):
+        self.targets.clear()
+        self.min_passes.clear()
+        
+        for row in range(self.table.rowCount()):
+            chk_item = self.table.item(row, 0)
+            sat_name = self.table.item(row, 1).text()
+            spin_widget = self.table.cellWidget(row, 2)
+            
+            if chk_item.checkState() == Qt.CheckState.Checked:
+                self.targets.add(sat_name)
+                
+            self.min_passes[sat_name] = spin_widget.value()
+            
+        self.accept()
 # ==============================================================================
 # [UI 컴포넌트] 다크 모드 맞춤형 고대비 네비게이션 툴바
 # ==============================================================================
@@ -145,6 +202,9 @@ class PassPredictTab(QWidget):
         self.tle_dir = "tle"
         self.stations_dir = "stations"
         self.pass_output_dir = "pass_output"
+
+        self.equalize_target_sats = None
+        self.min_pass_targets = {}
         
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
@@ -240,10 +300,18 @@ class PassPredictTab(QWidget):
         pass_no_layout.addWidget(self.start_pass_spin)
         left_panel.addLayout(pass_no_layout)
         
+        chk_layout = QHBoxLayout()
         self.chk_equalize_sat = QCheckBox("Equalize Sat Allocation (Fairness)")
         self.chk_equalize_sat.setChecked(True)
         self.chk_equalize_sat.setStyleSheet("font-weight: bold; color: #1B5E20;")
-        left_panel.addWidget(self.chk_equalize_sat)
+        chk_layout.addWidget(self.chk_equalize_sat)
+
+        self.btn_config_equalize = QPushButton("⚙️ Rules...")
+        self.btn_config_equalize.setFixedWidth(80)
+        self.btn_config_equalize.clicked.connect(self.click_config_equalize)
+        chk_layout.addWidget(self.btn_config_equalize)
+
+        left_panel.addLayout(chk_layout)
         
         self.lbl_logic_desc = QLabel(
             "<i>ℹ️ Swarm/Multi-sat fair distribution algorithm based on pass count & duration.</i>"
@@ -439,12 +507,29 @@ class PassPredictTab(QWidget):
         if not tle_data or not selected_stations:
             QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
             return
-            
+                    
         self.main_app.calculated_passes = calculate_passes(
             tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
-            equalize_allocation=equalize
+            equalize_allocation=equalize,
+            equalize_target_sats=self.equalize_target_sats,
+            min_pass_targets=self.min_pass_targets
         )
         self.populate_table()
+
+    def click_config_equalize(self):
+        """균등 배정 위성 선택 및 최소 패스 설정 다이얼로그 호출"""
+        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
+        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
+        detected_sats = [sat_key.split("(")[0].strip() for sat_key in tle_data.keys()]
+        
+        if not detected_sats:
+            QMessageBox.warning(self, "Warning", "No satellites detected. Please select TLE files first.")
+            return
+            
+        dialog = EqualizeConfigDialog(detected_sats, self.equalize_target_sats, self.min_pass_targets, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.equalize_target_sats = dialog.targets
+            self.min_pass_targets = dialog.min_passes
 
     def update_summary_dashboard(self):
         if not self.main_app.calculated_passes:
@@ -586,3 +671,6 @@ class PassPredictTab(QWidget):
                 QMessageBox.information(self, "Export Success", "Excel file generated successfully!")
             else:
                 QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{msg}")
+
+
+                
