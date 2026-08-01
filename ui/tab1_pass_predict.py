@@ -130,6 +130,113 @@ class GanttChartDialog(QDialog):
         super().accept()
 
 
+# ==============================================================================
+# 💡 [신규 확장] 최소/최대 패스 수 개별 지정 다이얼로그
+# ==============================================================================
+class EqualizeRuleDialog(QDialog):
+    def __init__(self, all_satellites, current_targets=None, current_min_targets=None, current_max_targets=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙️ Satellite Allocation Rules (Min Guarantee & Max Cap)")
+        self.resize(620, 480)
+        self.all_satellites = sorted(all_satellites)
+        
+        if current_targets is None:
+            self.current_targets = set(self.all_satellites)
+        else:
+            self.current_targets = set(current_targets)
+            
+        if current_min_targets is None:
+            self.current_min_targets = {sat: 1 for sat in self.all_satellites}
+        else:
+            self.current_min_targets = current_min_targets
+
+        if current_max_targets is None:
+            self.current_max_targets = {sat: 0 for sat in self.all_satellites} # 0 = No Limit
+        else:
+            self.current_max_targets = current_max_targets
+            
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        layout.addWidget(QLabel("<b>Set Individual Min Guarantee & Max Pass Limit per Satellite:</b><br><font color='#555555'>• Min Guarantee: 0 ~ 50 (0 = No Guarantee)<br>• Max Limit: 0 ~ 999 (0 = No Limit / Uncapped)</font>"))
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Include", "Satellite Name", "Min Guarantee", "Max Limit (0=No Limit)"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        
+        self.table.setRowCount(len(self.all_satellites))
+        
+        for idx, sat in enumerate(self.all_satellites):
+            # 1. 체크박스
+            chk_item = QTableWidgetItem()
+            chk_item.setCheckState(Qt.CheckState.Checked if sat in self.current_targets else Qt.CheckState.Unchecked)
+            self.table.setItem(idx, 0, chk_item)
+            
+            # 2. 위성 이름
+            sat_item = QTableWidgetItem(f"🛰️  {sat}")
+            sat_item.setFlags(sat_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(idx, 1, sat_item)
+            
+            # 3. 최소 보장 스핀박스 (0부터 가능)
+            min_spin = QSpinBox()
+            min_spin.setRange(0, 50)
+            min_spin.setValue(self.current_min_targets.get(sat, 1))
+            self.table.setCellWidget(idx, 2, min_spin)
+
+            # 4. 최대 제한 스핀박스 (0 = 제한 없음)
+            max_spin = QSpinBox()
+            max_spin.setRange(0, 999)
+            max_spin.setValue(self.current_max_targets.get(sat, 0))
+            self.table.setCellWidget(idx, 3, max_spin)
+            
+        layout.addWidget(self.table)
+        
+        btn_ctrl_layout = QHBoxLayout()
+        btn_sel_all = QPushButton("☑ Select All")
+        btn_sel_all.clicked.connect(lambda: self.set_all_checks(True))
+        btn_ctrl_layout.addWidget(btn_sel_all)
+        
+        btn_unsel_all = QPushButton("☒ Clear All")
+        btn_unsel_all.clicked.connect(lambda: self.set_all_checks(False))
+        btn_ctrl_layout.addWidget(btn_unsel_all)
+        layout.addLayout(btn_ctrl_layout)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def set_all_checks(self, checked):
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for idx in range(self.table.rowCount()):
+            item = self.table.item(idx, 0)
+            if item: item.setCheckState(state)
+
+    def get_results(self):
+        selected_sats = set()
+        min_targets = {}
+        max_targets = {}
+        for idx in range(self.table.rowCount()):
+            item_chk = self.table.item(idx, 0)
+            sat_name = self.all_satellites[idx]
+            min_spin = self.table.cellWidget(idx, 2)
+            max_spin = self.table.cellWidget(idx, 3)
+            
+            if item_chk and item_chk.checkState() == Qt.CheckState.Checked:
+                selected_sats.add(sat_name)
+                
+            if min_spin: min_targets[sat_name] = min_spin.value()
+            if max_spin: max_targets[sat_name] = max_spin.value()
+                
+        return selected_sats, min_targets, max_targets
+
+
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
@@ -138,6 +245,11 @@ class PassPredictTab(QWidget):
         self.stations_dir = "stations"
         self.pass_output_dir = "pass_output"
         self.color_mode = "STATION"
+        
+        # 할당 대상 위성 목록 및 최소/최대 패스 지정 맵 변수
+        self.equalize_target_sats = None
+        self.min_pass_targets = {}
+        self.max_pass_targets = {}
         
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
@@ -236,6 +348,11 @@ class PassPredictTab(QWidget):
         self.chk_equalize_sat.setChecked(True)
         self.chk_equalize_sat.setStyleSheet("font-weight: bold; color: #1B5E20;")
         left_panel.addWidget(self.chk_equalize_sat)
+
+        self.btn_open_equalize_dialog = QPushButton("⚙️ Set Allocation Target & Rules")
+        self.btn_open_equalize_dialog.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; margin-top: 2px; margin-bottom: 2px;")
+        self.btn_open_equalize_dialog.clicked.connect(self.click_open_equalize_dialog)
+        left_panel.addWidget(self.btn_open_equalize_dialog)
         
         self.lbl_logic_desc = QLabel(
             "<i>ℹ️ Swarm/Multi-sat fair distribution algorithm based on pass count & duration.</i>"
@@ -261,7 +378,6 @@ class PassPredictTab(QWidget):
         
         select_all_layout.addStretch()
 
-        # 🔥 [경합 강조 표현/미표현 토글 체크박스 신설]
         self.chk_highlight_conflict = QCheckBox("Highlight Conflicts (⚠️)")
         self.chk_highlight_conflict.setChecked(True)
         self.chk_highlight_conflict.setStyleSheet("font-weight: bold; color: #D32F2F;")
@@ -288,7 +404,7 @@ class PassPredictTab(QWidget):
         self.btn_select_all.clicked.connect(lambda: self.set_all_checkboxes(True))
         select_all_layout.addWidget(self.btn_select_all)
         
-        self.btn_unselect_all = QPushButton("☒ Uncheck All")
+        self.btn_unselect_all = QPushButton("☒ Unselect All")
         self.btn_unselect_all.setFixedWidth(100)
         self.btn_unselect_all.clicked.connect(lambda: self.set_all_checkboxes(False))
         select_all_layout.addWidget(self.btn_unselect_all)
@@ -331,6 +447,37 @@ class PassPredictTab(QWidget):
         
         right_panel.addLayout(btn_layout)
         layout.addLayout(right_panel, stretch=3)
+
+    def click_open_equalize_dialog(self):
+        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
+        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
+        
+        if not tle_data:
+            QMessageBox.warning(self, "Warning", "Please select at least one TLE file first.")
+            return
+            
+        all_sats = list(tle_data.keys())
+        
+        dialog = EqualizeRuleDialog(
+            all_satellites=all_sats,
+            current_targets=self.equalize_target_sats,
+            current_min_targets=self.min_pass_targets,
+            current_max_targets=self.max_pass_targets,
+            parent=self
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets = dialog.get_results()
+            
+            target_info_tokens = []
+            for sat in sorted(self.equalize_target_sats):
+                mn = self.min_pass_targets.get(sat, 1)
+                mx = self.max_pass_targets.get(sat, 0)
+                mx_str = "No Limit" if mx == 0 else f"{mx} max"
+                target_info_tokens.append(f"• {sat}: Min {mn} / Max ({mx_str})")
+                
+            info_msg = "Updated Allocation Rules:\n" + "\n".join(target_info_tokens) if target_info_tokens else "No satellites targeted."
+            QMessageBox.information(self, "Rules Updated", info_msg)
 
     def on_color_mode_changed(self):
         if self.radio_color_sat.isChecked():
@@ -464,7 +611,10 @@ class PassPredictTab(QWidget):
             
         self.main_app.calculated_passes = calculate_passes(
             tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
-            equalize_allocation=equalize
+            equalize_allocation=equalize,
+            equalize_target_sats=self.equalize_target_sats,
+            min_pass_targets=self.min_pass_targets,
+            max_pass_targets=self.max_pass_targets
         )
         self.populate_table()
 
@@ -492,14 +642,7 @@ class PassPredictTab(QWidget):
         summary_text = "📊 <b>Pass Allocation Summary:</b> &nbsp;&nbsp;|&nbsp;&nbsp; " + " &nbsp;&nbsp;|&nbsp;&nbsp; ".join(summary_tokens)
         self.lbl_summary_bar.setText(summary_text)
 
-    # --------------------------------------------------------------------------
-    # [렌더링] 테이블 데이터 및 경합 표현/미표현 제어
-    # --------------------------------------------------------------------------
     def populate_table(self):
-        """
-        [경합 강조 토글 적용]
-        - self.chk_highlight_conflict 체크 여부에 따라 경합 패스의 붉은 강조 스타일을 켜고 끕니다.
-        """
         if getattr(self.main_app, 'is_populating', False): return
         self.table.setRowCount(0)
         if not self.main_app.calculated_passes: return
@@ -529,7 +672,6 @@ class PassPredictTab(QWidget):
                 status_text = p.get('status', 'Normal')
                 status_item = QTableWidgetItem(status_text)
                 
-                # 모드별 기본 파스텔 색상 가져오기
                 if self.color_mode == "SATELLITE":
                     sat_raw = str(p['satellite'])
                     _, base_color = color_manager.get_colors(sat_raw)
@@ -537,7 +679,6 @@ class PassPredictTab(QWidget):
                     st_raw = str(p['station'])
                     _, base_color = color_manager.get_station_colors(st_raw)
 
-                # 경합(Conflict) 항목 스타일링 (토글 활성화 여부에 따름)
                 if "Conflict" in status_text and show_conflict_highlight:
                     status_item.setText(f"⚠️ {status_text}")
                     status_item.setForeground(QColor(180, 0, 0))

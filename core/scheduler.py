@@ -7,32 +7,15 @@ from skyfield.api import load, wgs84, EarthSatellite
 # [유틸리티] PyInstaller 번들 실행 환경 대응 리소스 경로 탐색 함수
 # ==============================================================================
 def get_resource_path(relative_path):
-    """
-    PyInstaller 패키징 환경 지원 함수
-    
-    [기능 설명]
-    - PyInstaller로 배포용 단일 파일/폴더(.exe) 생성 시, 임시 자원 폴더(sys._MEIPASS)를
-      우선 탐색하여 skyfield 천체 데이터 디렉토리를 안전하게 로드합니다.
-    - 일반 개발 환경일 경우 현재 프로젝트 루트 경로를 반환합니다.
-    """
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
 
 # ==============================================================================
-# [파싱] TLE 궤도 요소 파일 다중 로더 (인코딩 예외 안전 방어)
+# [파싱] TLE 궤도 요소 파일 다중 로더
 # ==============================================================================
 def parse_tle_from_dir(tle_dir, selected_files=None):
-    """
-    TLE(Two-Line Element) 궤도 파일 로더
-    
-    [기능 설명]
-    - tle 폴더 내의 모든 .tle 및 .txt 파일을 탐색하여 위성 정보(NORAD ID, 위성명, TLE 2줄)를 읽어옵니다.
-    - UTF-8, UTF-8-SIG, CP949, EUC-KR, LATIN-1 다중 인코딩 시도를 통해 
-      한글/특수문자 DecodeError 발생을 100% 차단합니다.
-    - 폴더가 없을 경우 기본 샘플 TLE 파일(default_sat.tle)을 자동 생성합니다.
-    """
     satellites = {}
     if not os.path.exists(tle_dir):
         os.makedirs(tle_dir)
@@ -47,7 +30,6 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
                 continue
             file_path = os.path.join(tle_dir, filename)
             
-            # 다중 인코딩 시도를 통한 안전한 파일 읽기
             lines = []
             for enc in ['utf-8', 'utf-8-sig', 'cp949', 'euc-kr', 'latin-1']:
                 try:
@@ -59,13 +41,11 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
                 
             idx = 0
             while idx < len(lines):
-                # TLE 표준 format인 "1 "과 "2 " 행 탐색
                 if lines[idx].startswith("1 ") and (idx + 1) < len(lines) and lines[idx+1].startswith("2 "):
                     line1 = lines[idx]
                     line2 = lines[idx+1]
                     norad_id = line1[2:7].strip()
                     
-                    # 위성 이름 추출 (1번 라인 바로 위 상단 행이 위성명인 경우 감지)
                     sat_name = None
                     if idx > 0 and not lines[idx-1].startswith("1 ") and not lines[idx-1].startswith("2 "):
                         sat_name = lines[idx-1].strip()
@@ -88,14 +68,6 @@ def parse_tle_from_dir(tle_dir, selected_files=None):
 # [파싱] 지상국 설정 파일 다중 로더
 # ==============================================================================
 def parse_stations_from_dir(stations_dir):
-    """
-    지상국(Ground Station) 환경 설정 파일 로더
-    
-    [기능 설명]
-    - stations 폴더 내의 .txt 및 .cfg 설정 파일에서 지상국 명칭, 위도, 경도,
-      수신(Download) 가능 여부, 송신(Command) 가능 여부를 파싱합니다.
-    - 다중 인코딩을 지원하며, 파싱 에러 시 해당 행을 예외 처리하여 차단합니다.
-    """
     stations_list = []
     if not os.path.exists(stations_dir):
         os.makedirs(stations_dir)
@@ -110,8 +82,6 @@ def parse_stations_from_dir(stations_dir):
     for filename in os.listdir(stations_dir):
         if filename.endswith(".txt") or filename.endswith(".cfg"):
             file_path = os.path.join(stations_dir, filename)
-            
-            # 다중 인코딩 시도를 통한 지상국 데이터 파싱
             for enc in ['utf-8', 'utf-8-sig', 'cp949', 'euc-kr']:
                 try:
                     with open(file_path, "r", encoding=enc) as f:
@@ -139,17 +109,9 @@ def parse_stations_from_dir(stations_dir):
 
 
 # ==============================================================================
-# [궤도 계산] 위성 궤도 회차(Orbit Pass No.) 타임라인 구축 함수
+# [궤도 계산] 위성 궤도 회차 타임라인 구축 함수
 # ==============================================================================
 def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
-    """
-    북극 통과 시점 기준 궤도 회차(Orbit Pass Number) 타임라인 산출
-    
-    [기능 설명]
-    - Skyfield의 위도 변환을 추적하여 위성이 남쪽에서 북쪽으로 상승(Ascending) 후 
-      최북단(북극 근처)을 통과하는 순간을 카운트하여 궤도 번호를 1씩 증가시킵니다.
-    - 시간대별 궤도 시작 시점 리스트 [(orbit_counter, start_datetime), ...]를 구축합니다.
-    """
     orbit_starts = []
     start_dt = t0.utc_datetime()
     end_dt = t1.utc_datetime()
@@ -166,7 +128,6 @@ def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
         geocentric = satellite.at(t_now)
         lat = wgs84.subpoint(geocentric).latitude.degrees
         if prev_lat != -999.0:
-            # 위도가 정점을 찍고 다시 감소하기 시작하는 지점(최북단) 감지
             if lat < prev_lat and is_ascending:
                 orbit_counter += 1
                 orbit_starts.append((orbit_counter, current_dt))
@@ -179,7 +140,6 @@ def find_orbit_starts_at_north_pole(satellite, ts, t0, t1, start_pass_no=1):
 
 
 def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
-    """AOS(가시 시작 시점)에 해당하는 궤도 회차 번호 매칭 함수"""
     for orbit_no, start_dt in reversed(orbit_timeline):
         if aos_time >= start_dt:
             return orbit_no
@@ -187,17 +147,14 @@ def get_orbit_number(aos_time, orbit_timeline, default_start_pass=1):
 
 
 # ==============================================================================
-# [스케줄링 핵심 엔진] 패스 계산 및 동시 발사 균등 배정 알고리즘
+# [스케줄링 핵심 엔진] 최소/최대 패스 제한 및 공평 배정 연산
 # ==============================================================================
 def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_dur, 
                      start_pass_no=1, equalize_allocation=True, 
-                     equalize_target_sats=None, min_pass_targets=None):
+                     equalize_target_sats=None, min_pass_targets=None, max_pass_targets=None):
     """
-    지상국 가시 패스 연산 및 군집/동시 발사 위성 Round-Robin 공평 배정 엔진
-    
-    [신규 파라미터 추가]
-    - equalize_target_sats (set/list): 균등 배정을 적용할 대상 위성 이름 목록 (None 시 전체 위성 대상)
-    - min_pass_targets (dict): 위성별 최소 필수 보장 패스 수량 (예: {'SAT-1': 2, 'SAT-2': 1})
+    :param min_pass_targets: 위성별 개별 최소 보장 패스 (예: {'NEONSAT1': 0, 'NEONSAT-1A': 2})
+    :param max_pass_targets: 위성별 개별 최대 제한 패스 (예: {'NEONSAT1': 5, 'NEONSAT-1A': 0(상한 없음)})
     """
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
@@ -268,7 +225,6 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     if not raw_passes:
         return []
 
-    # 지상국별 시간 경합 그룹핑
     raw_groups = []
     for gs_name in stations.keys():
         station_passes = [p for p in raw_passes if p['station'] == gs_name]
@@ -295,63 +251,76 @@ def calculate_passes(tle_data, station_configs, start_dt, end_dt, min_el, min_du
     calculated_passes = []
     group_counter = 0
     
-    # 위성별 누적 선택 횟수 트래커
     sat_selected_counts = {}
     for sat_key in tle_data.keys():
         clean_name = sat_key.split("(")[0].strip()
         sat_selected_counts[clean_name] = 0
 
-    # 파라미터 정제
     if equalize_target_sats is None:
         equalize_target_sats = set(sat_selected_counts.keys())
     else:
         equalize_target_sats = set(equalize_target_sats)
 
-    if min_pass_targets is None:
-        min_pass_targets = {}
+    if min_pass_targets is None: min_pass_targets = {}
+    if max_pass_targets is None: max_pass_targets = {}
 
-    # 경합 해결 및 고급 공평 배정 연산
+    # 경합 해결 및 최소/최대 패스 연산
     for g in raw_groups:
         if len(g) > 1:
             group_counter += 1
             
-            if equalize_allocation:
-                def fairness_sort_key(p):
-                    sat_clean = p['satellite'].split("(")[0].strip()
-                    is_target = sat_clean in equalize_target_sats
-                    
-                    curr_cnt = sat_selected_counts.get(sat_clean, 0)
-                    min_req = min_pass_targets.get(sat_clean, 0)
-                    
-                    # (1) 최소 요구 수량을 아직 채우지 못한 위성에게 최고 우선순위(0) 부여
-                    need_more = 0 if (is_target and curr_cnt < min_req) else 1
-                    
-                    # (2) 균등 대상 위성 여부 (대상 위성을 대상이 아닌 위성보다 우선 고려)
-                    target_flag = 0 if is_target else 1
-                    
-                    # (3) 현재 선택된 횟수 (오름차순)
-                    # (4) 교신 시간 Duration (내림차순)
-                    return (need_more, target_flag, curr_cnt, -p['duration'])
+            def fairness_sort_key(p):
+                sat_clean = p['satellite'].split("(")[0].strip()
+                is_target = sat_clean in equalize_target_sats
                 
-                sorted_candidates = sorted(g, key=fairness_sort_key)
-                winning_pass = sorted_candidates[0]
-            else:
-                winning_pass = max(g, key=lambda x: x['duration'])
+                curr_cnt = sat_selected_counts.get(sat_clean, 0)
+                min_req = min_pass_targets.get(sat_clean, 0)
+                max_cap = max_pass_targets.get(sat_clean, 0) # 0이면 상한 없음
+                
+                # (0) 이미 최대 상한 횟수(Max Cap)에 도달한 위성은 최후순위로 격하(99)
+                if max_cap > 0 and curr_cnt >= max_cap:
+                    return (99, 99, 99, 0)
+                
+                if equalize_allocation:
+                    need_more = 0 if (is_target and curr_cnt < min_req) else 1
+                    target_flag = 0 if is_target else 1
+                    return (need_more, target_flag, curr_cnt, -p['duration'])
+                else:
+                    return (0, 0, 0, -p['duration'])
+
+            sorted_candidates = sorted(g, key=fairness_sort_key)
+            winning_pass = sorted_candidates[0]
 
             for p in g:
                 p['conflict_group'] = group_counter
                 p['status'] = f"Conflict (Grp {group_counter})"
-                is_win = (p == winning_pass)
-                p['selected'] = is_win
                 
+                sat_clean = p['satellite'].split("(")[0].strip()
+                curr_cnt = sat_selected_counts.get(sat_clean, 0)
+                max_cap = max_pass_targets.get(sat_clean, 0)
+                
+                # 상한에 걸린 후보는 경합 시 자동 탈락
+                if max_cap > 0 and curr_cnt >= max_cap:
+                    is_win = False
+                else:
+                    is_win = (p == winning_pass)
+                    
+                p['selected'] = is_win
                 if is_win:
-                    sat_clean = p['satellite'].split("(")[0].strip()
-                    sat_selected_counts[sat_clean] = sat_selected_counts.get(sat_clean, 0) + 1
+                    sat_selected_counts[sat_clean] = curr_cnt + 1
         else:
             for p in g:
-                p['selected'] = True
                 sat_clean = p['satellite'].split("(")[0].strip()
-                sat_selected_counts[sat_clean] = sat_selected_counts.get(sat_clean, 0) + 1
+                curr_cnt = sat_selected_counts.get(sat_clean, 0)
+                max_cap = max_pass_targets.get(sat_clean, 0)
+                
+                # 단독 패스인 경우에도 Max Cap 초과 여부 검증
+                if max_cap > 0 and curr_cnt >= max_cap:
+                    p['selected'] = False
+                    p['status'] = f"Capped (Max {max_cap})"
+                else:
+                    p['selected'] = True
+                    sat_selected_counts[sat_clean] = curr_cnt + 1
                 
         calculated_passes.extend(g)
 

@@ -1,0 +1,5 @@
+# Station_Name, Latitude, Longitude, Is_Download_Capable(Y/N), Is_Command_Capable(Y/N)
+Daejeon, 36.35, 127.38, Y, Y
+Jeju, 33.50, 126.52, Y, N
+Svalbard, 78.23, 15.49, Y, Y
+King Sejong, -62.22, -58.78, N, N
