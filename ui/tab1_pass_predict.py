@@ -18,11 +18,19 @@ from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_co
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
 
 
+# ==============================================================================
+# [UI 컴포넌트] 다크 모드 맞춤형 고대비 네비게이션 툴바
+# ==============================================================================
 class HighVisibilityNavigationToolbar(NavigationToolbar):
-    """다크 배경에서도 돋보기/집/손 아이콘이 100% 선명하게 보이는 고대비 툴바"""
+    """
+    다크 테마 환경에서도 100% 선명하게 표출되는 고대비 Navigation Toolbar
+    
+    [기능 설명]
+    - 차트 상단의 돋보기(Zoom to rectangle), 손(Pan), 집(Reset View) 버튼의 배경 및 테라를 
+      밝은 고대비 스타일(#F8F9FA)로 디자인하여 가시성을 극대화합니다.
+    """
     def __init__(self, canvas, parent=None):
         super().__init__(canvas, parent)
-        # 툴바 배경과 텍스트를 고대비 라이트 스타일로 강조
         self.setStyleSheet("""
             QToolBar {
                 background-color: #F8F9FA;
@@ -53,27 +61,41 @@ class HighVisibilityNavigationToolbar(NavigationToolbar):
         """)
 
 
+# ==============================================================================
+# [팝업 창] 다크 모드 타임라인 간트 차트 (Gantt Chart Dialog)
+# ==============================================================================
 class GanttChartDialog(QDialog):
-    """고대비 툴바 및 네비게이션이 탑재된 간트 차트 팝업"""
+    """
+    위성 교신 패스 할당 타임라인 시각화 팝업 다이얼로그
+    
+    [기능 설명]
+    - 지상국별 통신 패스 영역을 Horizontal Bar(간트 차트) 형태로 표출합니다.
+    - 선택된 패스(Solid Pastel Color)와 경합/차단된 패스(Hatched Gray)를 시각적으로 구별합니다.
+    - 돋보기(Zoom) 확상 및 원복(Reset)을 자유롭게 지원하며, 창이 닫힐 때 Matplotlib 메모리를 완전히 해제합니다.
+    """
     def __init__(self, calculated_passes, parent=None):
         super().__init__(parent)
         self.setWindowTitle("📊 Multi-Satellite Pass Allocation Gantt Timeline")
         self.resize(1150, 680)
         self.passes = calculated_passes
+        self.fig = None  # 메모리 해제용 Figure 참조 보관
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         
+        # 다크 스마트 그래픽 스타일 적용
         plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1E1E1E')
+        self.fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1E1E1E')
         ax.set_facecolor('#262626')
         
+        # 지상국 Y축 인덱스 매핑
         stations = sorted(list({p['station'] for p in self.passes}))
         st_y_map = {st: i for i, st in enumerate(stations)}
         
         from core.color_manager import color_manager
         
+        # 패스 데이터별 렌더링
         for p in self.passes:
             st = p['station']
             sat_raw = p['satellite']
@@ -82,7 +104,6 @@ class GanttChartDialog(QDialog):
             y_pos = st_y_map[st]
             aos_dt = p['aos']
             los_dt = p['los']
-            
             is_selected = p.get('selected', True)
             
             aos_num = mdates.date2num(aos_dt)
@@ -101,10 +122,12 @@ class GanttChartDialog(QDialog):
                 alpha = 0.5
                 hatch = "///"
 
+            # 표준 barh 렌더링
             ax.barh(y_pos, width, left=aos_num, height=0.45, 
                     align='center', color=face_color, edgecolor=edge_color, 
                     alpha=alpha, hatch=hatch, linewidth=0.8)
             
+            # 텍스트 인라인 라벨 표출 (선택된 패스만)
             if is_selected and width > 0.0008:
                 mid_num = aos_num + (width / 2.0)
                 try:
@@ -114,30 +137,24 @@ class GanttChartDialog(QDialog):
                 except Exception:
                     pass
 
+        # 축 및 타이틀 레이아웃 구성
         ax.set_yticks(range(len(stations)))
         ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#FFFFFF')
         ax.xaxis_date()
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M', tz=timezone.utc))
-        fig.autofmt_xdate()
+        self.fig.autofmt_xdate()
         
         ax.set_title("Timeline Matrix: Allocated Passes (Solid Pastel) vs Collided / Blocked (Hatched Gray)", 
                      fontsize=12, fontweight='bold', color='#FFFFFF', pad=15)
         ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#DDDDDD')
-        
         ax.grid(True, linestyle=':', alpha=0.35, color='#999999')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#777777')
-        ax.spines['bottom'].set_color('#777777')
         
         if stations:
             ax.set_ylim(-0.6, len(stations) - 0.4)
             
-        fig.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.18)
+        self.fig.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.18)
         
-        canvas = FigureCanvas(fig)
-        
-        # 🔥 [고대비 툴바 연결 - 돋보기/집 아이콘 선명화]
+        canvas = FigureCanvas(self.fig)
         toolbar = HighVisibilityNavigationToolbar(canvas, self)
         layout.addWidget(toolbar)
         layout.addWidget(canvas)
@@ -147,8 +164,30 @@ class GanttChartDialog(QDialog):
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
 
+    def closeEvent(self, event):
+        """팝업 창이 닫힐 때 Matplotlib 피규어 메모리 완전 해제"""
+        if self.fig:
+            plt.close(self.fig)
+        super().closeEvent(event)
 
+    def accept(self):
+        if self.fig:
+            plt.close(self.fig)
+        super().accept()
+
+
+# ==============================================================================
+# [메인 탭] Tab 1: 위성 가시 패스 예측 및 스케줄 매트릭스 탭
+# ==============================================================================
 class PassPredictTab(QWidget):
+    """
+    Tab 1 메인 UI 클래스
+    
+    [기능 설명]
+    - TLE 파일 및 지상국 선택, 시간 창(24시간제) 지정, 고도각/교신시간 필터를 설정합니다.
+    - SGP4 연산을 실행하여 가시 패스를 생성하고, 동시 발사 위성 간 Round-Robin 공평 배정 결과를 표로 나타냅니다.
+    - CSV, YAML, Colorized Excel 저장 및 간트 차트 팝업 시각화를 제공합니다.
+    """
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -167,7 +206,9 @@ class PassPredictTab(QWidget):
         layout = QHBoxLayout(self)
         left_panel = QVBoxLayout()
         
+        # ----------------------------------------------------------------------
         # 1. Detected TLE Files 구역
+        # ----------------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>1. Detected TLE Files:</b>"))
         self.tle_file_list = QListWidget()
         self.tle_file_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -189,7 +230,9 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(tle_btn_layout)
         
+        # ----------------------------------------------------------------------
         # 2. Detected Ground Stations 구역
+        # ----------------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>2. Detected Ground Stations:</b>"))
         self.gs_list = QListWidget()
         self.gs_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -206,23 +249,27 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(gs_btn_layout)
         
-        # 3. Time Window (UTC) 구역 (24시간 형식 적용)
+        # ----------------------------------------------------------------------
+        # 3. Time Window (UTC) 구역 (24시간제 적용)
+        # ----------------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
         left_panel.addWidget(QLabel("Start Time:"))
         self.start_time_edit = QDateTimeEdit(now_utc_naive)
-        self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")  # 24시간 표기법
         self.start_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.start_time_edit)
         
         left_panel.addWidget(QLabel("End Time:"))
         self.end_time_edit = QDateTimeEdit(now_utc_naive + timedelta(days=1))
-        self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")  # 24시간 표기법
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
-        # 4. Filters 구역
+        # ----------------------------------------------------------------------
+        # 4. Filters & Scheduling Rules 구역
+        # ----------------------------------------------------------------------
         left_panel.addWidget(QLabel("<b>4. Filters & Scheduling Rules:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
@@ -268,7 +315,9 @@ class PassPredictTab(QWidget):
         
         layout.addLayout(left_panel, stretch=1)
         
-        # 오른쪽 매트릭스 테이블 구역
+        # ----------------------------------------------------------------------
+        # 오른쪽 패널: 매트릭스 테이블 및 컨트롤 버튼 구역
+        # ----------------------------------------------------------------------
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
@@ -290,6 +339,7 @@ class PassPredictTab(QWidget):
         select_all_layout.addWidget(self.btn_unselect_all)
         right_panel.addLayout(select_all_layout)
         
+        # 실시간 위성별 요약 대시보드 바
         self.lbl_summary_bar = QLabel("📊 Satellite Pass Distribution Summary: Run calculation to view metrics.")
         self.lbl_summary_bar.setStyleSheet("background-color: #F1F8E9; border: 1px solid #C8E6C9; padding: 6px; font-weight: bold; color: #2E7D32;")
         right_panel.addWidget(self.lbl_summary_bar)
@@ -305,6 +355,7 @@ class PassPredictTab(QWidget):
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
         
+        # 하단 내보내기 및 간트 차트 버튼 구역
         btn_layout = QHBoxLayout()
         
         self.btn_gantt_chart = QPushButton("📊 View Gantt Timeline Chart")
@@ -328,13 +379,18 @@ class PassPredictTab(QWidget):
         right_panel.addLayout(btn_layout)
         layout.addLayout(right_panel, stretch=3)
 
+    # --------------------------------------------------------------------------
+    # 이벤트 핸들러 및 유틸리티 함수들
+    # --------------------------------------------------------------------------
     def open_local_folder(self, folder_path):
+        """지정된 로컬 폴더를 탐색기로 엽니다."""
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         abs_path = os.path.abspath(folder_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
     def refresh_tle_files(self):
+        """tle 디렉토리의 TLE 파일 목록을 새로고침하여 리스트에 출력합니다."""
         self.tle_file_list.clear()
         parse_tle_from_dir(self.tle_dir)
         if os.path.exists(self.tle_dir):
@@ -345,6 +401,7 @@ class PassPredictTab(QWidget):
             self.tle_file_list.item(i).setSelected(True)
 
     def click_fetch_online_tle(self):
+        """CelesTrak 온라인 위성 검색 및 TLE 다운로드 다이얼로그 처리"""
         query, ok = QInputDialog.getText(
             self, "CelesTrak Satellite Search", "Enter Satellite Keyword or NORAD CatNR (e.g. NEONSAT, ISS, 39634):"
         )
@@ -417,6 +474,7 @@ class PassPredictTab(QWidget):
                 QMessageBox.critical(self, "Download Error", f"Failed to download selected satellites.")
 
     def refresh_stations(self):
+        """지상국 설정 파일 목록을 읽어 리스트를 새로고침합니다."""
         self.gs_list.clear()
         self.main_app.station_data = parse_stations_from_dir(self.stations_dir)
         for cfg in self.main_app.station_data:
@@ -425,6 +483,7 @@ class PassPredictTab(QWidget):
             self.gs_list.item(i).setSelected(True)
 
     def run_scheduling(self):
+        """선택된 조건으로 SGP4 궤도 연산을 실행하여 통신 패스를 계산합니다."""
         selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
         tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
         selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
@@ -451,6 +510,7 @@ class PassPredictTab(QWidget):
         self.populate_table()
 
     def update_summary_dashboard(self):
+        """상단 대시보드 바에 위성별 할당 수량 및 누적 통신 시간을 실시간 업데이트합니다."""
         if not self.main_app.calculated_passes:
             self.lbl_summary_bar.setText("📊 Satellite Pass Distribution Summary: No data calculated.")
             return
@@ -475,11 +535,13 @@ class PassPredictTab(QWidget):
         self.lbl_summary_bar.setText(summary_text)
 
     def populate_table(self):
+        """계산된 패스 리스트를 우측 그리드 테이블에 출력합니다."""
         if self.main_app.is_populating: return
         self.table.setRowCount(0)
         if not self.main_app.calculated_passes: return
             
         self.main_app.is_populating = True
+        self.table.blockSignals(True)  # 시그널 무한 재귀 호출 방어막
         try:
             self.table.setRowCount(len(self.main_app.calculated_passes))
             from core.color_manager import color_manager
@@ -512,9 +574,11 @@ class PassPredictTab(QWidget):
                     
             self.update_summary_dashboard()
         finally:
+            self.table.blockSignals(False)
             self.main_app.is_populating = False
 
     def click_view_gantt_chart(self):
+        """간트 차트 시각화 팝업 창을 호출합니다."""
         if not self.main_app.calculated_passes:
             QMessageBox.warning(self, "Warning", "Please calculate pass schedule first.")
             return
@@ -522,6 +586,7 @@ class PassPredictTab(QWidget):
         dialog.exec()
 
     def handle_table_lock(self, item):
+        """동일 지상국 시간 경합 그룹(Conflict Group) 내 배타적 상호 선택 상호작용 처리"""
         if self.main_app.is_populating or item.column() != 0: return
         user_data = item.data(Qt.ItemDataRole.UserRole)
         if not user_data: return
@@ -555,16 +620,19 @@ class PassPredictTab(QWidget):
             finally: self.main_app.is_populating = False
 
     def click_export_csv(self):
+        """선택된 패스 목록을 CSV로 저장합니다."""
         if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", self.pass_output_dir, "CSV Files (*.csv)")
         if path: export_to_csv(path, self.main_app.calculated_passes)
 
     def click_export_yaml(self):
+        """선택된 패스 목록을 YAML로 저장합니다."""
         if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", self.pass_output_dir, "YAML Files (*.yaml)")
         if path: export_to_yaml(path, self.main_app.calculated_passes)
 
     def set_all_checkboxes(self, check_state):
+        """표 내의 모든 선택 체크박스를 일괄 선택/해제합니다."""
         if not self.main_app.calculated_passes: return
         self.main_app.is_populating = True
         target_state = Qt.CheckState.Checked if check_state else Qt.CheckState.Unchecked
@@ -577,14 +645,15 @@ class PassPredictTab(QWidget):
         self.populate_table()
 
     def click_export_excel(self):
+        """선택된 패스 목록을 지상국별 파스텔 색상 디자인이 적용된 Excel 파일로 저장합니다."""
         if not self.main_app.calculated_passes: return
         if not any(p['selected'] for p in self.main_app.calculated_passes):
             QMessageBox.warning(self, "Warning", "No passes are selected.")
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", self.pass_output_dir, "Excel Files (*.xlsx)")
         if path:
-            try:
-                export_to_excel_with_color(path, self.main_app.calculated_passes)
+            success, msg = export_to_excel_with_color(path, self.main_app.calculated_passes)
+            if success:
                 QMessageBox.information(self, "Export Success", "Excel file generated successfully!")
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{str(e)}")
+            else:
+                QMessageBox.critical(self, "Export Error", f"Failed to save Excel file:\n{msg}")
