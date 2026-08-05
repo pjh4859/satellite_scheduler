@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('skyfield_data', 'skyfield_data')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
