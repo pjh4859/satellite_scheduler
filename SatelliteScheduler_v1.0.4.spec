@@ -1,21 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
-
-datas = [('tle', 'tle'), ('stations', 'stations'), ('plans', 'plans'), ('pass_output', 'pass_output'), ('final_output', 'final_output')]
-binaries = []
-hiddenimports = []
-tmp_ret = collect_all('skyfield')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('matplotlib')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -30,7 +21,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='LEOP_Pass_Scheduler',
+    name='SatelliteScheduler_v1.0.4',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -49,5 +40,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='LEOP_Pass_Scheduler',
+    name='SatelliteScheduler_v1.0.4',
 )
