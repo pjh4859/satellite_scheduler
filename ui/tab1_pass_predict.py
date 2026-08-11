@@ -1,11 +1,13 @@
 import os
+import csv
+import yaml
 from datetime import datetime, timedelta, timezone
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
-                             QRadioButton, QButtonGroup, QGroupBox)
+                             QRadioButton, QButtonGroup, QGroupBox, QComboBox)
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 
@@ -17,7 +19,7 @@ from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as Navigation
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
-from core.plan_parser import normalize_sat_name
+from core.plan_parser import normalize_sat_name, load_plan_file, load_plan_excel, load_plan_csv
 
 from ui.dialog_tle_generator import TleFromSepVectorDialog
 
@@ -130,9 +132,6 @@ class GanttChartDialog(QDialog):
         super().accept()
 
 
-# ==============================================================================
-# 💡 [신규 확장] 최소/최대 패스 수 개별 지정 다이얼로그
-# ==============================================================================
 class EqualizeRuleDialog(QDialog):
     def __init__(self, all_satellites, current_targets=None, current_min_targets=None, current_max_targets=None, parent=None):
         super().__init__(parent)
@@ -173,23 +172,19 @@ class EqualizeRuleDialog(QDialog):
         self.table.setRowCount(len(self.all_satellites))
         
         for idx, sat in enumerate(self.all_satellites):
-            # 1. 체크박스
             chk_item = QTableWidgetItem()
             chk_item.setCheckState(Qt.CheckState.Checked if sat in self.current_targets else Qt.CheckState.Unchecked)
             self.table.setItem(idx, 0, chk_item)
             
-            # 2. 위성 이름
             sat_item = QTableWidgetItem(f"🛰️  {sat}")
             sat_item.setFlags(sat_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(idx, 1, sat_item)
             
-            # 3. 최소 보장 스핀박스 (0부터 가능)
             min_spin = QSpinBox()
             min_spin.setRange(0, 50)
             min_spin.setValue(self.current_min_targets.get(sat, 1))
             self.table.setCellWidget(idx, 2, min_spin)
 
-            # 4. 최대 제한 스핀박스 (0 = 제한 없음)
             max_spin = QSpinBox()
             max_spin.setRange(0, 999)
             max_spin.setValue(self.current_max_targets.get(sat, 0))
@@ -368,11 +363,30 @@ class PassPredictTab(QWidget):
         
         layout.addLayout(left_panel, stretch=1)
         
+        # ----------------------------------------------------------------------
+        # 우측 패널 (스케쥴 테이블 / 시각화 / 외부 파일 로더)
+        # ----------------------------------------------------------------------
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
+
+        # 💡 [신규 확장] 외부 스케쥴 파일 로드 엔진 선택 콤보박스 및 로드 버튼
+        select_all_layout.addSpacing(10)
+        self.combo_import_engine = QComboBox()
+        self.combo_import_engine.addItems([
+            "Auto Engine (Standard ➔ DRM 시 xlwings 자동 전환)",
+            "Standard Engine (openpyxl / CSV)",
+            "DRM Bypass Engine (xlwings)"
+        ])
+        self.combo_import_engine.setToolTip("사내 DRM(문서 보안)이 걸린 Excel 파일은 DRM Bypass 또는 Auto 모드로 읽습니다.")
+        select_all_layout.addWidget(self.combo_import_engine)
+
+        self.btn_import_schedule = QPushButton("📂 Import Schedule File (.xlsx / .csv / .yaml)")
+        self.btn_import_schedule.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 4px 8px;")
+        self.btn_import_schedule.clicked.connect(self.click_import_external_schedule)
+        select_all_layout.addWidget(self.btn_import_schedule)
         
-        self.btn_open_pass_out = QPushButton("📂 Open Pass Output Folder")
+        self.btn_open_pass_out = QPushButton("📂 Open Folder")
         self.btn_open_pass_out.clicked.connect(lambda: self.open_local_folder(self.pass_output_dir))
         select_all_layout.addWidget(self.btn_open_pass_out)
         
@@ -410,7 +424,7 @@ class PassPredictTab(QWidget):
         select_all_layout.addWidget(self.btn_unselect_all)
         right_panel.addLayout(select_all_layout)
         
-        self.lbl_summary_bar = QLabel("📊 Satellite Pass Distribution Summary: Run calculation to view metrics.")
+        self.lbl_summary_bar = QLabel("📊 Satellite Pass Distribution Summary: Run calculation or import schedule file.")
         self.lbl_summary_bar.setStyleSheet("background-color: #F1F8E9; border: 1px solid #C8E6C9; padding: 6px; font-weight: bold; color: #2E7D32;")
         right_panel.addWidget(self.lbl_summary_bar)
         
@@ -448,6 +462,235 @@ class PassPredictTab(QWidget):
         right_panel.addLayout(btn_layout)
         layout.addLayout(right_panel, stretch=3)
 
+    # --------------------------------------------------------------------------
+    # 💡 [신규/수정] 외부 생성/Export 스케쥴 파일 전용 역로딩 파이프라인
+    # --------------------------------------------------------------------------
+    def click_import_external_schedule(self):
+        """외부 Export 스케쥴 파일 (.xlsx, .csv, .yaml)을 원본 서식대로 직접 읽어 테이블에 바인딩"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Schedule File", self.pass_output_dir, 
+            "Supported Schedule Files (*.xlsx *.xls *.csv *.yaml *.yml)"
+        )
+        if not path:
+            return
+
+        engine_idx = self.combo_import_engine.currentIndex()
+        engine_map = {0: "auto", 1: "standard", 2: "xlwings"}
+        selected_engine = engine_map[engine_idx]
+
+        try:
+            parsed_passes = self.parse_external_schedule_file(path, engine=selected_engine)
+            if not parsed_passes:
+                QMessageBox.warning(self, "Warning", "The selected schedule file contains no valid pass data.")
+                return
+
+            self.main_app.calculated_passes = parsed_passes
+            self.populate_table()
+
+            filename = os.path.basename(path)
+            QMessageBox.information(
+                self, "Import Complete", 
+                f"Successfully loaded {len(parsed_passes)} pass records from:\n'{filename}'"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
+
+    def parse_external_schedule_file(self, file_path, engine="auto"):
+        """Tab 2 변환 로직을 우회하여 패스 스케쥴 원본 데이터 추출"""
+        ext = os.path.splitext(file_path)[1].lower()
+        passes = []
+
+        # 1. YAML 파일 파싱
+        if ext in [".yaml", ".yml"]:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f) or {}
+            raw_list = content if isinstance(content, list) else content.get("predicted_passes", content.get("schedule", content.get("passes", [])))
+            for item in raw_list:
+                if isinstance(item, dict):
+                    passes.append(self.convert_dict_to_pass_item(item))
+            return passes
+
+        # 2. Excel (.xlsx, .xls) 파싱 (독립 엑셀 로더 적용)
+        if ext in [".xlsx", ".xls"]:
+            raw_dicts = self._read_raw_excel(file_path, engine=engine)
+            for row in raw_dicts:
+                passes.append(self.convert_dict_to_pass_item(row))
+            return passes
+
+        # 3. CSV 파싱 (YAML 형식 CSV vs 일반 CSV 감지)
+        if ext == ".csv":
+            # 3-1. YAML 텍스트 구조로 저장된 CSV인 경우 1차 시도
+            try:
+                with open(file_path, "r", encoding="utf-8-sig") as f:
+                    content = yaml.safe_load(f) or {}
+                if isinstance(content, dict) and "predicted_passes" in content:
+                    raw_list = content.get("predicted_passes", [])
+                    for item in raw_list:
+                        if isinstance(item, dict):
+                            passes.append(self.convert_dict_to_pass_item(item))
+                    return passes
+            except Exception:
+                pass
+
+            # 3-2. 일반 표 형식 CSV 파싱
+            raw_dicts = self._read_raw_csv(file_path)
+            for row in raw_dicts:
+                passes.append(self.convert_dict_to_pass_item(row))
+            return passes
+
+        return passes
+
+    def _read_raw_excel(self, file_path, engine="auto"):
+        """Tab 2 변환 없이 순수 Excel 딕셔너리 리스트 반환"""
+        rows = []
+        if engine == "standard":
+            rows = self._read_excel_openpyxl_raw(file_path)
+        elif engine == "xlwings":
+            rows = self._read_excel_xlwings_raw(file_path)
+        else: # auto
+            try:
+                rows = self._read_excel_openpyxl_raw(file_path)
+            except Exception:
+                rows = self._read_excel_xlwings_raw(file_path)
+
+        if not rows:
+            return []
+
+        headers = [str(cell).strip() if cell is not None else "" for cell in rows[0]]
+        dict_rows = []
+        for row in rows[1:]:
+            if not any(row):
+                continue
+            row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+            dict_rows.append(row_dict)
+        return dict_rows
+
+    def _read_excel_openpyxl_raw(self, file_path):
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        return rows
+
+    def _read_excel_xlwings_raw(self, file_path):
+        import xlwings as xw
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
+        try:
+            wb = app.books.open(file_path)
+            sheet = wb.sheets[0]
+            raw_data = sheet.used_range.value
+            wb.close()
+            if raw_data and not isinstance(raw_data[0], list):
+                raw_data = [raw_data]
+            return raw_data or []
+        finally:
+            app.quit()
+
+    def _read_raw_csv(self, file_path):
+        """Tab 2 변환 없이 순수 CSV DictReader 반환"""
+        encodings = ['utf-8-sig', 'cp949', 'euc-kr', 'utf-8']
+        for enc in encodings:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    reader = csv.DictReader(f)
+                    return list(reader)
+            except Exception:
+                continue
+        return []
+
+    def convert_dict_to_pass_item(self, d):
+        """YAML / CSV / Excel 원본 딕셔너리 키 유연 정규화 탐색"""
+        if not isinstance(d, dict):
+            d = {}
+
+        # 1. 공백, 언더바, 괄호, 대소문자 제거 정규화 맵
+        norm_d = {}
+        for k, v in d.items():
+            if k is not None:
+                norm_k = str(k).lower().replace("_", "").replace(" ", "").replace("(", "").replace(")", "").replace("-", "").replace(".", "")
+                norm_d[norm_k] = v
+
+        def get_val(candidate_keys, default_val=""):
+            for ck in candidate_keys:
+                norm_ck = ck.lower().replace("_", "").replace(" ", "").replace("(", "").replace(")", "").replace("-", "").replace(".", "")
+                if norm_ck in norm_d:
+                    val = norm_d[norm_ck]
+                    if val is not None and str(val).strip() != "":
+                        return val
+            return default_val
+
+        # 2. 패스 스케쥴 항목 정밀 추출
+        station = get_val(["station", "groundstation", "gs", "main"], "GS")
+        sat = get_val(["satellite", "satid", "sat"], "SAT")
+        pass_no_str = str(get_val(["passno", "passnum", "sequenceid"], 1))
+        aos_str = str(get_val(["aos", "aosutc", "sub"], ""))
+        los_str = str(get_val(["los", "losutc", "remark"], ""))
+        dur_str = str(get_val(["durationsec", "duration", "durations", "mindur"], 0))
+        max_el_str = str(get_val(["maxelevation", "maxel", "maxeldeg", "maxelevationdeg", "minel"], 0))
+        status_str = str(get_val(["status", "reqcap"], "Normal"))
+
+        return self.convert_values_to_pass_item(
+            station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str
+        )
+
+    def parse_dt_string(self, dt_str):
+        """다양한 형태의 문자열/datetime 객체를 naive datetime으로 안전 변환"""
+        if isinstance(dt_str, datetime):
+            return dt_str.replace(tzinfo=None)
+            
+        if not dt_str:
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+        
+        dt_str = str(dt_str).strip()
+        formats = [
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
+            "%Y/%m/%d %H:%M:%S"
+        ]
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(dt_str, fmt)
+                return dt
+            except ValueError:
+                continue
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+    
+
+    def convert_values_to_pass_item(self, station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str):
+        """문자열 패스 파라미터를 내부 datetime/float 인스턴스로 변환"""
+        # Pass 번호 숫자 추출 ("Pass 1" -> 1)
+        digits = [s for s in str(pass_no_str) if s.isdigit()]
+        p_no = int("".join(digits)) if digits else 1
+
+        # 날짜시간 파싱 (여러 포맷 대응)
+        aos_dt = self.parse_dt_string(aos_str)
+        los_dt = self.parse_dt_string(los_str)
+
+        try: float_dur = float(dur_str)
+        except ValueError: float_dur = 0.0
+
+        try: float_el = float(max_el_str)
+        except ValueError: float_el = 0.0
+
+        return {
+            'station': str(station).strip(),
+            'satellite': str(sat).strip(),
+            'pass_no': p_no,
+            'aos': aos_dt,
+            'los': los_dt,
+            'duration': float_dur,
+            'max_el': float_el,
+            'status': str(status_str).replace("⚠️", "").strip(),
+            'selected': True,
+            'conflict_group': None
+        }
+    
+
+    # --------------------------------------------------------------------------
+    # 기존 이벤트 및 컨트롤 메서드 유지
+    # --------------------------------------------------------------------------
     def click_open_equalize_dialog(self):
         selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
         tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
@@ -664,8 +907,12 @@ class PassPredictTab(QWidget):
                 self.table.setItem(row_idx, 1, QTableWidgetItem(p['station']))
                 self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))
-                self.table.setItem(row_idx, 4, QTableWidgetItem(p['aos'].strftime('%Y-%m-%d %H:%M:%S')))
-                self.table.setItem(row_idx, 5, QTableWidgetItem(p['los'].strftime('%Y-%m-%d %H:%M:%S')))
+                
+                aos_val = p['aos'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['aos'], datetime) else str(p['aos'])
+                los_val = p['los'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['los'], datetime) else str(p['los'])
+                
+                self.table.setItem(row_idx, 4, QTableWidgetItem(aos_val))
+                self.table.setItem(row_idx, 5, QTableWidgetItem(los_val))
                 self.table.setItem(row_idx, 6, QTableWidgetItem(str(p['duration'])))
                 self.table.setItem(row_idx, 7, QTableWidgetItem(str(p['max_el'])))
                 
@@ -705,7 +952,7 @@ class PassPredictTab(QWidget):
 
     def click_view_gantt_chart(self):
         if not self.main_app.calculated_passes:
-            QMessageBox.warning(self, "Warning", "Please calculate pass schedule first.")
+            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
             return
         dialog = GanttChartDialog(self.main_app.calculated_passes, self)
         dialog.exec()
