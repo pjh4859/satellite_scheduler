@@ -1,13 +1,15 @@
 import os
 import csv
 import yaml
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
-                             QRadioButton, QButtonGroup, QGroupBox, QComboBox)
+                             QRadioButton, QButtonGroup, QGroupBox, QComboBox, QTimeEdit, QDateEdit, 
+                             QLineEdit)  # 💡 QLineEdit 추가
+
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 
@@ -150,7 +152,7 @@ class EqualizeRuleDialog(QDialog):
             self.current_min_targets = current_min_targets
 
         if current_max_targets is None:
-            self.current_max_targets = {sat: 0 for sat in self.all_satellites} # 0 = No Limit
+            self.current_max_targets = {sat: 0 for sat in self.all_satellites}
         else:
             self.current_max_targets = current_max_targets
             
@@ -232,6 +234,183 @@ class EqualizeRuleDialog(QDialog):
         return selected_sats, min_targets, max_targets
 
 
+# ==============================================================================
+# 💡 [신규] 근무 시간 규칙(Shift Hours Rules, UTC 기준) 설정 다이얼로그
+# ==============================================================================
+class ShiftRuleDialog(QDialog):
+    def __init__(self, current_rules=None, base_start_dt=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙️ Ground Station Shift Hours Rules (UTC)")
+        self.resize(720, 420)
+        
+        today_utc = (base_start_dt or datetime.now(timezone.utc)).date()
+        
+        # 기본 프리셋 규칙 (LEOP 3일 24시간 + Normal Ops 09:00~19:00 UTC)
+        if not current_rules:
+            self.rules = [
+                {
+                    "phase_name": "Phase 1: LEOP (24 Hours)",
+                    "start_date": today_utc,
+                    "end_date": today_utc + timedelta(days=2),
+                    "start_time": time(0, 0),
+                    "end_time": time(23, 59),
+                    "is_24h": True
+                },
+                {
+                    "phase_name": "Phase 2: Normal Operations",
+                    "start_date": today_utc + timedelta(days=3),
+                    "end_date": today_utc + timedelta(days=365),
+                    "start_time": time(9, 0),
+                    "end_time": time(19, 0),
+                    "is_24h": False
+                }
+            ]
+        else:
+            self.rules = [dict(r) for r in current_rules]
+            
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        layout.addWidget(QLabel(
+            "<b>Define Shift Window Rules per Operation Phase (All times in UTC):</b><br>"
+            "<font color='#555555'>• Pass schedule will be generated ONLY for passes within active shift hours.<br>"
+            "• Initial LEOP phase defaults to 24-hour operation (00:00 ~ 23:59 UTC).</font>"
+        ))
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            "Phase Name", "Start Date (UTC)", "End Date (UTC)", "Start Time (UTC)", "End Time (UTC)", "24H Full"
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in range(1, 6):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+            
+        layout.addWidget(self.table)
+        self.populate_rule_table()
+
+        # 규칙 추가/삭제 컨트롤 버튼
+        btn_ctrl = QHBoxLayout()
+        btn_add = QPushButton("➕ Add Phase Rule")
+        btn_add.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
+        btn_add.clicked.connect(self.click_add_rule)
+        btn_ctrl.addWidget(btn_add)
+
+        btn_del = QPushButton("❌ Delete Selected Rule")
+        btn_del.clicked.connect(self.click_delete_rule)
+        btn_ctrl.addWidget(btn_del)
+        
+        btn_ctrl.addStretch()
+        layout.addLayout(btn_ctrl)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def populate_rule_table(self):
+        self.table.setRowCount(len(self.rules))
+        for r_idx, rule in enumerate(self.rules):
+            # 0. Phase Name
+            txt_name = QLineEdit(rule.get("phase_name", f"Phase {r_idx+1}"))
+            self.table.setCellWidget(r_idx, 0, txt_name)
+
+            # 1. Start Date
+            dt_start = QDateEdit(rule.get("start_date", datetime.now(timezone.utc).date()))
+            dt_start.setCalendarPopup(True)
+            self.table.setCellWidget(r_idx, 1, dt_start)
+
+            # 2. End Date
+            dt_end = QDateEdit(rule.get("end_date", datetime.now(timezone.utc).date() + timedelta(days=3)))
+            dt_end.setCalendarPopup(True)
+            self.table.setCellWidget(r_idx, 2, dt_end)
+
+            # 3. Start Time
+            tm_start = QTimeEdit(rule.get("start_time", time(9, 0)))
+            self.table.setCellWidget(r_idx, 3, tm_start)
+
+            # 4. End Time
+            tm_end = QTimeEdit(rule.get("end_time", time(19, 0)))
+            self.table.setCellWidget(r_idx, 4, tm_end)
+
+            # 5. 24H Full Checkbox
+            chk_24 = QCheckBox()
+            chk_24.setChecked(rule.get("is_24h", False))
+            chk_24.toggled.connect(lambda checked, row=r_idx: self.toggle_24h(row, checked))
+            
+            # 셀 가운데 정렬 레이아웃
+            cell_widget = QWidget()
+            cell_layout = QHBoxLayout(cell_widget)
+            cell_layout.addWidget(chk_24)
+            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            self.table.setCellWidget(r_idx, 5, cell_widget)
+
+            # 24시간인 경우 시간 입력 비활성화
+            if rule.get("is_24h", False):
+                tm_start.setEnabled(False)
+                tm_end.setEnabled(False)
+
+    def toggle_24h(self, row, is_24h):
+        tm_start = self.table.cellWidget(row, 3)
+        tm_end = self.table.cellWidget(row, 4)
+        if tm_start and tm_end:
+            tm_start.setEnabled(not is_24h)
+            tm_end.setEnabled(not is_24h)
+
+    def click_add_rule(self):
+        last_end = datetime.now(timezone.utc).date()
+        if self.rules:
+            last_end = self.rules[-1]["end_date"] + timedelta(days=1)
+            
+        new_rule = {
+            "phase_name": f"Phase {len(self.rules) + 1}",
+            "start_date": last_end,
+            "end_date": last_end + timedelta(days=30),
+            "start_time": time(9, 0),
+            "end_time": time(19, 0),
+            "is_24h": False
+        }
+        self.rules.append(new_rule)
+        self.populate_rule_table()
+
+    def click_delete_rule(self):
+        curr_row = self.table.currentRow()
+        if 0 <= curr_row < len(self.rules):
+            self.rules.pop(curr_row)
+            self.populate_rule_table()
+
+    def get_results(self):
+        extracted_rules = []
+        for r_idx in range(self.table.rowCount()):
+            name_widget = self.table.cellWidget(r_idx, 0)
+            s_date_widget = self.table.cellWidget(r_idx, 1)
+            e_date_widget = self.table.cellWidget(r_idx, 2)
+            s_time_widget = self.table.cellWidget(r_idx, 3)
+            e_time_widget = self.table.cellWidget(r_idx, 4)
+            chk_widget = self.table.cellWidget(r_idx, 5).findChild(QCheckBox)
+
+            phase_name = name_widget.text().strip() if name_widget else f"Phase {r_idx+1}"
+            s_date = s_date_widget.date().toPyDate() if s_date_widget else datetime.now(timezone.utc).date()
+            e_date = e_date_widget.date().toPyDate() if e_date_widget else datetime.now(timezone.utc).date()
+            is_24h = chk_widget.isChecked() if chk_widget else False
+
+            s_time = time(0, 0) if is_24h else s_time_widget.time().toPyTime()
+            e_time = time(23, 59, 59) if is_24h else e_time_widget.time().toPyTime()
+
+            extracted_rules.append({
+                "phase_name": phase_name,
+                "start_date": s_date,
+                "end_date": e_date,
+                "start_time": s_time,
+                "end_time": e_time,
+                "is_24h": is_24h
+            })
+        return extracted_rules
+
+
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
@@ -245,6 +424,9 @@ class PassPredictTab(QWidget):
         self.equalize_target_sats = None
         self.min_pass_targets = {}
         self.max_pass_targets = {}
+        
+        # 💡 [신규] 근무 시간(Shift Hours) 규칙 변수
+        self.shift_hours_rules = []
         
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
@@ -338,6 +520,17 @@ class PassPredictTab(QWidget):
         self.start_pass_spin.setValue(1)
         pass_no_layout.addWidget(self.start_pass_spin)
         left_panel.addLayout(pass_no_layout)
+
+        # 💡 [신규] 근무 시간(Shift Hours) 필터 활성화 체크박스 및 설정 버튼
+        self.chk_use_shift_hours = QCheckBox("Apply Shift Hours Filter (UTC)")
+        self.chk_use_shift_hours.setChecked(False)
+        self.chk_use_shift_hours.setStyleSheet("font-weight: bold; color: #0D47A1;")
+        left_panel.addWidget(self.chk_use_shift_hours)
+
+        self.btn_open_shift_dialog = QPushButton("⚙️ Set Work Shift Hours (UTC)")
+        self.btn_open_shift_dialog.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; margin-top: 1px; margin-bottom: 2px;")
+        self.btn_open_shift_dialog.clicked.connect(self.click_open_shift_dialog)
+        left_panel.addWidget(self.btn_open_shift_dialog)
         
         self.chk_equalize_sat = QCheckBox("Equalize Sat Allocation (Fairness)")
         self.chk_equalize_sat.setChecked(True)
@@ -345,12 +538,12 @@ class PassPredictTab(QWidget):
         left_panel.addWidget(self.chk_equalize_sat)
 
         self.btn_open_equalize_dialog = QPushButton("⚙️ Set Allocation Target & Rules")
-        self.btn_open_equalize_dialog.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; margin-top: 2px; margin-bottom: 2px;")
+        self.btn_open_equalize_dialog.setStyleSheet("background-color: #388E3C; color: white; font-weight: bold; margin-top: 2px; margin-bottom: 2px;")
         self.btn_open_equalize_dialog.clicked.connect(self.click_open_equalize_dialog)
         left_panel.addWidget(self.btn_open_equalize_dialog)
         
         self.lbl_logic_desc = QLabel(
-            "<i>ℹ️ Swarm/Multi-sat fair distribution algorithm based on pass count & duration.</i>"
+            "<i>ℹ️ Shift Hours & Swarm fair distribution algorithm per satellite.</i>"
         )
         self.lbl_logic_desc.setWordWrap(True)
         self.lbl_logic_desc.setStyleSheet("color: #555555; font-size: 11px; margin-bottom: 5px; margin-left: 15px;")
@@ -370,7 +563,6 @@ class PassPredictTab(QWidget):
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
 
-        # 💡 [신규 확장] 외부 스케쥴 파일 로드 엔진 선택 콤보박스 및 로드 버튼
         select_all_layout.addSpacing(10)
         self.combo_import_engine = QComboBox()
         self.combo_import_engine.addItems([
@@ -463,10 +655,104 @@ class PassPredictTab(QWidget):
         layout.addLayout(right_panel, stretch=3)
 
     # --------------------------------------------------------------------------
-    # 💡 [신규/수정] 외부 생성/Export 스케쥴 파일 전용 역로딩 파이프라인
+    # 💡 [신규] Shift Hours 설정 다이얼로그 호출 및 패스 검증 함수
+    # --------------------------------------------------------------------------
+    def click_open_shift_dialog(self):
+        base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
+        dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.shift_hours_rules = dialog.get_results()
+            self.chk_use_shift_hours.setChecked(True)
+            
+            info_tokens = []
+            for r in self.shift_hours_rules:
+                if r["is_24h"]:
+                    info_tokens.append(f"• {r['phase_name']}: 24H Full")
+                else:
+                    info_tokens.append(f"• {r['phase_name']}: {r['start_time'].strftime('%H:%M')}~{r['end_time'].strftime('%H:%M')} UTC")
+            
+            msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
+            QMessageBox.information(self, "Shift Rules Updated", msg)
+
+    def is_pass_in_shift_hours(self, aos_dt, los_dt):
+        """
+        AOS/LOS 시각(UTC)이 해당 날짜의 Shift Hours 범위 내에 있는지 검증
+        """
+        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
+            return True
+
+        pass_date = aos_dt.date()
+        pass_start_time = aos_dt.time()
+        pass_end_time = los_dt.time()
+
+        for rule in self.shift_hours_rules:
+            if rule["start_date"] <= pass_date <= rule["end_date"]:
+                if rule.get("is_24h", False):
+                    return True
+                
+                s_time = rule["start_time"]
+                e_time = rule["end_time"]
+
+                # 주간 근무 (예: 09:00 ~ 19:00 UTC)
+                if s_time <= e_time:
+                    if s_time <= pass_start_time and pass_end_time <= e_time:
+                        return True
+                # 야간 근무 (자정을 넘기는 근무, 예: 22:00 ~ 06:00 UTC)
+                else:
+                    if pass_start_time >= s_time or pass_end_time <= e_time:
+                        return True
+                return False
+
+        # 정의된 규칙 날짜 범위를 벗어난 경우 허용
+        return True
+
+    # --------------------------------------------------------------------------
+    # 스케쥴 연산 및 패스 필터 연동
+    # --------------------------------------------------------------------------
+    def run_scheduling(self):
+        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
+        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
+        selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
+        
+        start_dt = self.start_time_edit.dateTime().toPyDateTime()
+        end_dt = self.end_time_edit.dateTime().toPyDateTime()
+        if start_dt >= end_dt:
+            QMessageBox.critical(self, "Time Window Error", "Start Time must be earlier than End Time!")
+            return
+            
+        min_el = self.min_el_spin.value()
+        min_dur = self.min_dur_spin.value()
+        start_pass_no = self.start_pass_spin.value()
+        equalize = self.chk_equalize_sat.isChecked()
+        
+        if not tle_data or not selected_stations:
+            QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
+            return
+            
+        # 1. 1차 물리적 패스 계산
+        raw_passes = calculate_passes(
+            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
+            equalize_allocation=equalize,
+            equalize_target_sats=self.equalize_target_sats,
+            min_pass_targets=self.min_pass_targets,
+            max_pass_targets=self.max_pass_targets
+        )
+
+        # 2. 근무 시간(Shift Hours Filter) 필터링 적용
+        if self.chk_use_shift_hours.isChecked():
+            filtered_passes = [
+                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'])
+            ]
+            self.main_app.calculated_passes = filtered_passes
+        else:
+            self.main_app.calculated_passes = raw_passes
+
+        self.populate_table()
+
+    # --------------------------------------------------------------------------
+    # 외부 파일 로더 연동
     # --------------------------------------------------------------------------
     def click_import_external_schedule(self):
-        """외부 Export 스케쥴 파일 (.xlsx, .csv, .yaml)을 원본 서식대로 직접 읽어 테이블에 바인딩"""
         path, _ = QFileDialog.getOpenFileName(
             self, "Import Schedule File", self.pass_output_dir, 
             "Supported Schedule Files (*.xlsx *.xls *.csv *.yaml *.yml)"
@@ -496,11 +782,9 @@ class PassPredictTab(QWidget):
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
     def parse_external_schedule_file(self, file_path, engine="auto"):
-        """Tab 2 변환 로직을 우회하여 패스 스케쥴 원본 데이터 추출"""
         ext = os.path.splitext(file_path)[1].lower()
         passes = []
 
-        # 1. YAML 파일 파싱
         if ext in [".yaml", ".yml"]:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f) or {}
@@ -510,16 +794,13 @@ class PassPredictTab(QWidget):
                     passes.append(self.convert_dict_to_pass_item(item))
             return passes
 
-        # 2. Excel (.xlsx, .xls) 파싱 (독립 엑셀 로더 적용)
         if ext in [".xlsx", ".xls"]:
             raw_dicts = self._read_raw_excel(file_path, engine=engine)
             for row in raw_dicts:
                 passes.append(self.convert_dict_to_pass_item(row))
             return passes
 
-        # 3. CSV 파싱 (YAML 형식 CSV vs 일반 CSV 감지)
         if ext == ".csv":
-            # 3-1. YAML 텍스트 구조로 저장된 CSV인 경우 1차 시도
             try:
                 with open(file_path, "r", encoding="utf-8-sig") as f:
                     content = yaml.safe_load(f) or {}
@@ -532,7 +813,6 @@ class PassPredictTab(QWidget):
             except Exception:
                 pass
 
-            # 3-2. 일반 표 형식 CSV 파싱
             raw_dicts = self._read_raw_csv(file_path)
             for row in raw_dicts:
                 passes.append(self.convert_dict_to_pass_item(row))
@@ -541,13 +821,12 @@ class PassPredictTab(QWidget):
         return passes
 
     def _read_raw_excel(self, file_path, engine="auto"):
-        """Tab 2 변환 없이 순수 Excel 딕셔너리 리스트 반환"""
         rows = []
         if engine == "standard":
             rows = self._read_excel_openpyxl_raw(file_path)
         elif engine == "xlwings":
             rows = self._read_excel_xlwings_raw(file_path)
-        else: # auto
+        else:
             try:
                 rows = self._read_excel_openpyxl_raw(file_path)
             except Exception:
@@ -589,7 +868,6 @@ class PassPredictTab(QWidget):
             app.quit()
 
     def _read_raw_csv(self, file_path):
-        """Tab 2 변환 없이 순수 CSV DictReader 반환"""
         encodings = ['utf-8-sig', 'cp949', 'euc-kr', 'utf-8']
         for enc in encodings:
             try:
@@ -601,11 +879,9 @@ class PassPredictTab(QWidget):
         return []
 
     def convert_dict_to_pass_item(self, d):
-        """YAML / CSV / Excel 원본 딕셔너리 키 유연 정규화 탐색"""
         if not isinstance(d, dict):
             d = {}
 
-        # 1. 공백, 언더바, 괄호, 대소문자 제거 정규화 맵
         norm_d = {}
         for k, v in d.items():
             if k is not None:
@@ -621,7 +897,6 @@ class PassPredictTab(QWidget):
                         return val
             return default_val
 
-        # 2. 패스 스케쥴 항목 정밀 추출
         station = get_val(["station", "groundstation", "gs", "main"], "GS")
         sat = get_val(["satellite", "satid", "sat"], "SAT")
         pass_no_str = str(get_val(["passno", "passnum", "sequenceid"], 1))
@@ -635,36 +910,10 @@ class PassPredictTab(QWidget):
             station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str
         )
 
-    def parse_dt_string(self, dt_str):
-        """다양한 형태의 문자열/datetime 객체를 naive datetime으로 안전 변환"""
-        if isinstance(dt_str, datetime):
-            return dt_str.replace(tzinfo=None)
-            
-        if not dt_str:
-            return datetime.now(timezone.utc).replace(tzinfo=None)
-        
-        dt_str = str(dt_str).strip()
-        formats = [
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f",
-            "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
-            "%Y/%m/%d %H:%M:%S"
-        ]
-        for fmt in formats:
-            try:
-                dt = datetime.strptime(dt_str, fmt)
-                return dt
-            except ValueError:
-                continue
-        return datetime.now(timezone.utc).replace(tzinfo=None)
-    
-
     def convert_values_to_pass_item(self, station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str):
-        """문자열 패스 파라미터를 내부 datetime/float 인스턴스로 변환"""
-        # Pass 번호 숫자 추출 ("Pass 1" -> 1)
         digits = [s for s in str(pass_no_str) if s.isdigit()]
         p_no = int("".join(digits)) if digits else 1
 
-        # 날짜시간 파싱 (여러 포맷 대응)
         aos_dt = self.parse_dt_string(aos_str)
         los_dt = self.parse_dt_string(los_str)
 
@@ -686,10 +935,30 @@ class PassPredictTab(QWidget):
             'selected': True,
             'conflict_group': None
         }
-    
+
+    def parse_dt_string(self, dt_str):
+        if isinstance(dt_str, datetime):
+            return dt_str.replace(tzinfo=None)
+            
+        if not dt_str:
+            return datetime.now(timezone.utc).replace(tzinfo=None)
+        
+        dt_str = str(dt_str).strip()
+        formats = [
+            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
+            "%Y/%m/%d %H:%M:%S"
+        ]
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(dt_str, fmt)
+                return dt
+            except ValueError:
+                continue
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     # --------------------------------------------------------------------------
-    # 기존 이벤트 및 컨트롤 메서드 유지
+    # 기존 UI 조작 및 이벤트 메서드
     # --------------------------------------------------------------------------
     def click_open_equalize_dialog(self):
         selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
@@ -831,35 +1100,6 @@ class PassPredictTab(QWidget):
             self.gs_list.addItem(f"{cfg[0]} (Lat: {cfg[1]}, Lon: {cfg[2]}) [Down:{cfg[3]} / Cmd:{cfg[4]}]")
         for i in range(self.gs_list.count()):
             self.gs_list.item(i).setSelected(True)
-
-    def run_scheduling(self):
-        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
-        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
-        selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
-        
-        start_dt = self.start_time_edit.dateTime().toPyDateTime()
-        end_dt = self.end_time_edit.dateTime().toPyDateTime()
-        if start_dt >= end_dt:
-            QMessageBox.critical(self, "Time Window Error", "Start Time must be earlier than End Time!")
-            return
-            
-        min_el = self.min_el_spin.value()
-        min_dur = self.min_dur_spin.value()
-        start_pass_no = self.start_pass_spin.value()
-        equalize = self.chk_equalize_sat.isChecked()
-        
-        if not tle_data or not selected_stations:
-            QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
-            return
-            
-        self.main_app.calculated_passes = calculate_passes(
-            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
-            equalize_allocation=equalize,
-            equalize_target_sats=self.equalize_target_sats,
-            min_pass_targets=self.min_pass_targets,
-            max_pass_targets=self.max_pass_targets
-        )
-        self.populate_table()
 
     def update_summary_dashboard(self):
         if not self.main_app.calculated_passes:
