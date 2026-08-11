@@ -1,12 +1,13 @@
 import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QLabel, QFileDialog, 
-                             QHeaderView, QMessageBox, QDialog, QTextEdit)
+                             QHeaderView, QMessageBox, QDialog, QTextEdit, QComboBox)
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
 
 from core.exporter import export_constraints_to_csv, export_constraints_to_excel_color
 from core.plan_parser import load_plan_file, save_plan_to_yaml, PLAN_HEADERS
+
 
 class ConstraintsPlannerTab(QWidget):
     """
@@ -16,6 +17,7 @@ class ConstraintsPlannerTab(QWidget):
     - 미션 활동 제약 조건(Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID)을
       그리드 표 형태로 직접 생성, 편집, 조회합니다.
     - YAML, Excel, CSV 형식을 통합 지원하며 Remark (운용 상세 설명) 입력을 지원합니다.
+    - 사내 DRM 문서 우회를 위한 Excel Load Engine 선택 기능(Auto / Standard / DRM Bypass)을 제공합니다.
     """
     def __init__(self, main_app):
         super().__init__()
@@ -33,7 +35,22 @@ class ConstraintsPlannerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
-        # 1. 상단 파일 로드 및 편집 버튼 구역
+        # 1. 상단 DRM 엔진 선택 콤보박스
+        top_ctrl.addWidget(QLabel("<b>Excel Engine:</b>"))
+        self.combo_engine = QComboBox()
+        self.combo_engine.addItems([
+            "Auto (Standard 시도 ➔ DRM 발생 시 xlwings 자동 전환)",
+            "Standard (openpyxl - 고속 / MS Excel 미필요)",
+            "DRM Bypass (xlwings - 보안 문서 지원 / MS Excel 필요)"
+        ])
+        self.combo_engine.setToolTip(
+            "사내 DRM(문서 보안)이 적용된 Excel 파일은 'DRM Bypass' 또는 'Auto' 모드를 사용하세요."
+        )
+        top_ctrl.addWidget(self.combo_engine)
+
+        top_ctrl.addSpacing(10)
+
+        # 2. 파일 로드 및 편집 버튼 구역
         self.btn_import_plan_file = QPushButton("📂 Load Constraint File (YAML / Excel / CSV)")
         self.btn_import_plan_file.setStyleSheet("font-weight: bold; padding: 6px; background-color: #2E7D32; color: white;")
         self.btn_import_plan_file.clicked.connect(self.click_import_constraints)
@@ -54,7 +71,7 @@ class ConstraintsPlannerTab(QWidget):
         top_ctrl.addStretch()
         layout.addLayout(top_ctrl)
         
-        # 2. 미션 제약 조건 테이블 (9개 컬럼: Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID)
+        # 3. 미션 제약 조건 테이블 (9개 컬럼: Sat_ID, Main, Sub, Remark, Min_El, Required_Cap, Min_Duration, Pre_Req_Main, Sequence_ID)
         self.plan_table = QTableWidget()
         self.plan_table.setColumnCount(len(self.plan_headers_labels))
         self.plan_table.setHorizontalHeaderLabels(self.plan_headers_labels)
@@ -75,7 +92,7 @@ class ConstraintsPlannerTab(QWidget):
         self.plan_table.itemChanged.connect(self.handle_cell_changed)
         self.plan_table.itemDoubleClicked.connect(self.handle_cell_double_clicked)
         
-        # 3. 하단 저장 옵션 컨트롤 패널
+        # 4. 하단 저장 옵션 컨트롤 패널
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Save Options:</b>"))
         
@@ -127,15 +144,28 @@ class ConstraintsPlannerTab(QWidget):
             self.plan_table.resizeRowsToContents()
 
     def click_import_constraints(self):
-        """Constraint 파일 (YAML, Excel, CSV) 파싱 후 테이블에 로드"""
+        """Constraint 파일 (YAML, Excel, CSV) 파싱 후 테이블에 로드 (DRM 우회 엔진 옵션 연동)"""
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Constraints File", self.plans_dir, "Supported Files (*.yaml *.yml *.xlsx *.csv)"
         )
         if not path: return
+
+        # 선택된 엔진 매핑
+        engine_idx = self.combo_engine.currentIndex()
+        engine_map = {0: "auto", 1: "standard", 2: "xlwings"}
+        selected_engine = engine_map[engine_idx]
+
         try:
-            plan_rows = load_plan_file(path)
+            plan_rows = load_plan_file(path, engine=selected_engine)
+            if not plan_rows:
+                QMessageBox.warning(self, "Warning", "Loaded data is empty or invalid format.")
+                return
+
             self.populate_plan_table_ui(plan_rows)
-            QMessageBox.information(self, "Loaded", f"Successfully loaded {len(plan_rows)} activity records.")
+            QMessageBox.information(
+                self, "Loaded", 
+                f"Successfully loaded {len(plan_rows)} activity records using [{selected_engine.upper()}] engine."
+            )
         except Exception as e:
             QMessageBox.critical(self, "Parser Error", f"Failed to load constraints data:\n{str(e)}")
 

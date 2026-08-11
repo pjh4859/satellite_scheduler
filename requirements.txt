@@ -1,3 +1,24 @@
-PyQt6>=6.4.0
+# ==========================================
+# 🛰️ Satellite Pass Scheduler Requirements
+# ==========================================
+
+# GUI Framework
+PyQt6>=6.5.0
+
+# Orbit Dynamics & Astronomy Engine
 skyfield>=1.48
-pyyaml>=6.0
+sgp4>=2.20
+
+# Data Analysis & Plotting
+matplotlib>=3.7.0
+
+# Excel & Data File Parsing
+openpyxl>=3.1.0
+PyYAML>=6.0
+
+# DRM Bypass & Excel Automation (Windows MS Excel Required)
+xlwings>=0.30.0
+pywin32>=306; sys_platform == 'win32'
+
+# Executable Packaging
+pyinstaller>=6.0.0
