@@ -235,7 +235,7 @@ class EqualizeRuleDialog(QDialog):
 
 
 # ==============================================================================
-# 💡 [신규] 근무 시간 규칙(Shift Hours Rules, UTC 기준) 설정 다이얼로그
+# 💡 [수정] 근무 시간 규칙(Shift Hours Rules, UTC 기준) 설정 다이얼로그
 # ==============================================================================
 class ShiftRuleDialog(QDialog):
     def __init__(self, current_rules=None, base_start_dt=None, parent=None):
@@ -245,11 +245,11 @@ class ShiftRuleDialog(QDialog):
         
         today_utc = (base_start_dt or datetime.now(timezone.utc)).date()
         
-        # 기본 프리셋 규칙 (LEOP 3일 24시간 + Normal Ops 09:00~19:00 UTC)
+        # 기본 프리셋 규칙 (Phase 1: 초기 3일 24시간 + Phase 2: 이후 09:00~19:00 UTC)
         if not current_rules:
             self.rules = [
                 {
-                    "phase_name": "Phase 1: LEOP (24 Hours)",
+                    "phase_name": "Phase 1",
                     "start_date": today_utc,
                     "end_date": today_utc + timedelta(days=2),
                     "start_time": time(0, 0),
@@ -257,7 +257,7 @@ class ShiftRuleDialog(QDialog):
                     "is_24h": True
                 },
                 {
-                    "phase_name": "Phase 2: Normal Operations",
+                    "phase_name": "Phase 2",
                     "start_date": today_utc + timedelta(days=3),
                     "end_date": today_utc + timedelta(days=365),
                     "start_time": time(9, 0),
@@ -276,7 +276,7 @@ class ShiftRuleDialog(QDialog):
         layout.addWidget(QLabel(
             "<b>Define Shift Window Rules per Operation Phase (All times in UTC):</b><br>"
             "<font color='#555555'>• Pass schedule will be generated ONLY for passes within active shift hours.<br>"
-            "• Initial LEOP phase defaults to 24-hour operation (00:00 ~ 23:59 UTC).</font>"
+            "• Initial Phase 1 defaults to 24-hour operation (00:00 ~ 23:59 UTC).</font>"
         ))
 
         self.table = QTableWidget()
