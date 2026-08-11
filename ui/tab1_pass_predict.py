@@ -1,414 +1,24 @@
 import os
 import csv
 import yaml
-from datetime import datetime, timedelta, timezone, time
+from datetime import datetime, timedelta, timezone
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
-                             QRadioButton, QButtonGroup, QGroupBox, QComboBox, QTimeEdit, QDateEdit, 
-                             QLineEdit)  # 💡 QLineEdit 추가
-
+                             QRadioButton, QGroupBox, QComboBox)
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QColor, QDesktopServices, QFont
-
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+from PyQt6.QtGui import QColor, QFont, QDesktopServices
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
-from core.plan_parser import normalize_sat_name, load_plan_file, load_plan_excel, load_plan_csv
 
 from ui.dialog_tle_generator import TleFromSepVectorDialog
-
-
-class HighVisibilityNavigationToolbar(NavigationToolbar):
-    def __init__(self, canvas, parent=None):
-        super().__init__(canvas, parent)
-        self.setStyleSheet("""
-            QToolBar { background-color: #F8F9FA; border: 1px solid #CCCCCC; padding: 4px; spacing: 6px; }
-            QToolButton { background-color: #FFFFFF; color: #111111; border: 1px solid #B0BEC5; border-radius: 4px; padding: 4px 8px; font-weight: bold; }
-            QToolButton:hover { background-color: #E3F2FD; border: 1px solid #2196F3; }
-            QToolButton:checked { background-color: #BBDEFB; border: 1px solid #1976D2; }
-            QLabel { color: #111111; font-weight: bold; }
-        """)
-
-
-class GanttChartDialog(QDialog):
-    def __init__(self, calculated_passes, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("📊 Multi-Satellite Pass Allocation Gantt Timeline")
-        self.resize(1150, 680)
-        self.passes = calculated_passes
-        self.fig = None
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        plt.style.use('dark_background')
-        self.fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1E1E1E')
-        ax.set_facecolor('#262626')
-        
-        stations = sorted(list({p['station'] for p in self.passes}))
-        st_y_map = {st: i for i, st in enumerate(stations)}
-        
-        from core.color_manager import color_manager
-        
-        for p in self.passes:
-            st = p['station']
-            sat_raw = p['satellite']
-            
-            y_pos = st_y_map[st]
-            aos_dt = p['aos']
-            los_dt = p['los']
-            is_selected = p.get('selected', True)
-            
-            aos_num = mdates.date2num(aos_dt)
-            los_num = mdates.date2num(los_dt)
-            width = los_num - aos_num
-            
-            if is_selected:
-                hex_color, _ = color_manager.get_colors(sat_raw)
-                face_color = f"#{hex_color}"
-                edge_color = "#FFFFFF"
-                alpha = 0.95
-                hatch = None
-            else:
-                face_color = "#3A3A3A"
-                edge_color = "#D32F2F"
-                alpha = 0.6
-                hatch = "///"
-
-            ax.barh(y_pos, width, left=aos_num, height=0.45, 
-                    align='center', color=face_color, edgecolor=edge_color, 
-                    alpha=alpha, hatch=hatch, linewidth=1.0)
-            
-            if is_selected and width > 0.0008:
-                mid_num = aos_num + (width / 2.0)
-                try:
-                    sat_clean = sat_raw.split("(")[0].strip()
-                    mid_date = mdates.num2date(mid_num)
-                    ax.text(mid_date, y_pos, sat_clean, ha='center', va='center', 
-                            fontsize=8, fontweight='bold', color='#111111', clip_on=True)
-                except Exception:
-                    pass
-
-        ax.set_yticks(range(len(stations)))
-        ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#FFFFFF')
-        ax.xaxis_date()
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M', tz=timezone.utc))
-        self.fig.autofmt_xdate()
-        
-        ax.set_title("Timeline Matrix: Allocated Passes (Solid Pastel) vs Collided / Blocked (Hatched Gray)", 
-                     fontsize=12, fontweight='bold', color='#FFFFFF', pad=15)
-        ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#DDDDDD')
-        ax.grid(True, linestyle=':', alpha=0.35, color='#999999')
-        
-        if stations:
-            ax.set_ylim(-0.6, len(stations) - 0.4)
-            
-        self.fig.subplots_adjust(left=0.12, right=0.96, top=0.90, bottom=0.18)
-        
-        canvas = FigureCanvas(self.fig)
-        toolbar = HighVisibilityNavigationToolbar(canvas, self)
-        layout.addWidget(toolbar)
-        layout.addWidget(canvas)
-        
-        btn_close = QPushButton("Close Timeline Chart")
-        btn_close.setStyleSheet("background-color: #333333; color: white; font-weight: bold; padding: 6px;")
-        btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close)
-
-    def closeEvent(self, event):
-        if self.fig:
-            plt.close(self.fig)
-        super().closeEvent(event)
-
-    def accept(self):
-        if self.fig:
-            plt.close(self.fig)
-        super().accept()
-
-
-class EqualizeRuleDialog(QDialog):
-    def __init__(self, all_satellites, current_targets=None, current_min_targets=None, current_max_targets=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("⚙️ Satellite Allocation Rules (Min Guarantee & Max Cap)")
-        self.resize(620, 480)
-        self.all_satellites = sorted(all_satellites)
-        
-        if current_targets is None:
-            self.current_targets = set(self.all_satellites)
-        else:
-            self.current_targets = set(current_targets)
-            
-        if current_min_targets is None:
-            self.current_min_targets = {sat: 1 for sat in self.all_satellites}
-        else:
-            self.current_min_targets = current_min_targets
-
-        if current_max_targets is None:
-            self.current_max_targets = {sat: 0 for sat in self.all_satellites}
-        else:
-            self.current_max_targets = current_max_targets
-            
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        layout.addWidget(QLabel("<b>Set Individual Min Guarantee & Max Pass Limit per Satellite:</b><br><font color='#555555'>• Min Guarantee: 0 ~ 50 (0 = No Guarantee)<br>• Max Limit: 0 ~ 999 (0 = No Limit / Uncapped)</font>"))
-        
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Include", "Satellite Name", "Min Guarantee", "Max Limit (0=No Limit)"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        
-        self.table.setRowCount(len(self.all_satellites))
-        
-        for idx, sat in enumerate(self.all_satellites):
-            chk_item = QTableWidgetItem()
-            chk_item.setCheckState(Qt.CheckState.Checked if sat in self.current_targets else Qt.CheckState.Unchecked)
-            self.table.setItem(idx, 0, chk_item)
-            
-            sat_item = QTableWidgetItem(f"🛰️  {sat}")
-            sat_item.setFlags(sat_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(idx, 1, sat_item)
-            
-            min_spin = QSpinBox()
-            min_spin.setRange(0, 50)
-            min_spin.setValue(self.current_min_targets.get(sat, 1))
-            self.table.setCellWidget(idx, 2, min_spin)
-
-            max_spin = QSpinBox()
-            max_spin.setRange(0, 999)
-            max_spin.setValue(self.current_max_targets.get(sat, 0))
-            self.table.setCellWidget(idx, 3, max_spin)
-            
-        layout.addWidget(self.table)
-        
-        btn_ctrl_layout = QHBoxLayout()
-        btn_sel_all = QPushButton("☑ Select All")
-        btn_sel_all.clicked.connect(lambda: self.set_all_checks(True))
-        btn_ctrl_layout.addWidget(btn_sel_all)
-        
-        btn_unsel_all = QPushButton("☒ Clear All")
-        btn_unsel_all.clicked.connect(lambda: self.set_all_checks(False))
-        btn_ctrl_layout.addWidget(btn_unsel_all)
-        layout.addLayout(btn_ctrl_layout)
-        
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def set_all_checks(self, checked):
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for idx in range(self.table.rowCount()):
-            item = self.table.item(idx, 0)
-            if item: item.setCheckState(state)
-
-    def get_results(self):
-        selected_sats = set()
-        min_targets = {}
-        max_targets = {}
-        for idx in range(self.table.rowCount()):
-            item_chk = self.table.item(idx, 0)
-            sat_name = self.all_satellites[idx]
-            min_spin = self.table.cellWidget(idx, 2)
-            max_spin = self.table.cellWidget(idx, 3)
-            
-            if item_chk and item_chk.checkState() == Qt.CheckState.Checked:
-                selected_sats.add(sat_name)
-                
-            if min_spin: min_targets[sat_name] = min_spin.value()
-            if max_spin: max_targets[sat_name] = max_spin.value()
-                
-        return selected_sats, min_targets, max_targets
-
-
-# ==============================================================================
-# 💡 [수정] 근무 시간 규칙(Shift Hours Rules, UTC 기준) 설정 다이얼로그
-# ==============================================================================
-class ShiftRuleDialog(QDialog):
-    def __init__(self, current_rules=None, base_start_dt=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("⚙️ Ground Station Shift Hours Rules (UTC)")
-        self.resize(720, 420)
-        
-        today_utc = (base_start_dt or datetime.now(timezone.utc)).date()
-        
-        # 기본 프리셋 규칙 (Phase 1: 초기 3일 24시간 + Phase 2: 이후 09:00~19:00 UTC)
-        if not current_rules:
-            self.rules = [
-                {
-                    "phase_name": "Phase 1",
-                    "start_date": today_utc,
-                    "end_date": today_utc + timedelta(days=2),
-                    "start_time": time(0, 0),
-                    "end_time": time(23, 59),
-                    "is_24h": True
-                },
-                {
-                    "phase_name": "Phase 2",
-                    "start_date": today_utc + timedelta(days=3),
-                    "end_date": today_utc + timedelta(days=365),
-                    "start_time": time(9, 0),
-                    "end_time": time(19, 0),
-                    "is_24h": False
-                }
-            ]
-        else:
-            self.rules = [dict(r) for r in current_rules]
-            
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        layout.addWidget(QLabel(
-            "<b>Define Shift Window Rules per Operation Phase (All times in UTC):</b><br>"
-            "<font color='#555555'>• Pass schedule will be generated ONLY for passes within active shift hours.<br>"
-            "• Initial Phase 1 defaults to 24-hour operation (00:00 ~ 23:59 UTC).</font>"
-        ))
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels([
-            "Phase Name", "Start Date (UTC)", "End Date (UTC)", "Start Time (UTC)", "End Time (UTC)", "24H Full"
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for c in range(1, 6):
-            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
-            
-        layout.addWidget(self.table)
-        self.populate_rule_table()
-
-        # 규칙 추가/삭제 컨트롤 버튼
-        btn_ctrl = QHBoxLayout()
-        btn_add = QPushButton("➕ Add Phase Rule")
-        btn_add.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
-        btn_add.clicked.connect(self.click_add_rule)
-        btn_ctrl.addWidget(btn_add)
-
-        btn_del = QPushButton("❌ Delete Selected Rule")
-        btn_del.clicked.connect(self.click_delete_rule)
-        btn_ctrl.addWidget(btn_del)
-        
-        btn_ctrl.addStretch()
-        layout.addLayout(btn_ctrl)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def populate_rule_table(self):
-        self.table.setRowCount(len(self.rules))
-        for r_idx, rule in enumerate(self.rules):
-            # 0. Phase Name
-            txt_name = QLineEdit(rule.get("phase_name", f"Phase {r_idx+1}"))
-            self.table.setCellWidget(r_idx, 0, txt_name)
-
-            # 1. Start Date
-            dt_start = QDateEdit(rule.get("start_date", datetime.now(timezone.utc).date()))
-            dt_start.setCalendarPopup(True)
-            self.table.setCellWidget(r_idx, 1, dt_start)
-
-            # 2. End Date
-            dt_end = QDateEdit(rule.get("end_date", datetime.now(timezone.utc).date() + timedelta(days=3)))
-            dt_end.setCalendarPopup(True)
-            self.table.setCellWidget(r_idx, 2, dt_end)
-
-            # 3. Start Time
-            tm_start = QTimeEdit(rule.get("start_time", time(9, 0)))
-            self.table.setCellWidget(r_idx, 3, tm_start)
-
-            # 4. End Time
-            tm_end = QTimeEdit(rule.get("end_time", time(19, 0)))
-            self.table.setCellWidget(r_idx, 4, tm_end)
-
-            # 5. 24H Full Checkbox
-            chk_24 = QCheckBox()
-            chk_24.setChecked(rule.get("is_24h", False))
-            chk_24.toggled.connect(lambda checked, row=r_idx: self.toggle_24h(row, checked))
-            
-            # 셀 가운데 정렬 레이아웃
-            cell_widget = QWidget()
-            cell_layout = QHBoxLayout(cell_widget)
-            cell_layout.addWidget(chk_24)
-            cell_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cell_layout.setContentsMargins(0, 0, 0, 0)
-            self.table.setCellWidget(r_idx, 5, cell_widget)
-
-            # 24시간인 경우 시간 입력 비활성화
-            if rule.get("is_24h", False):
-                tm_start.setEnabled(False)
-                tm_end.setEnabled(False)
-
-    def toggle_24h(self, row, is_24h):
-        tm_start = self.table.cellWidget(row, 3)
-        tm_end = self.table.cellWidget(row, 4)
-        if tm_start and tm_end:
-            tm_start.setEnabled(not is_24h)
-            tm_end.setEnabled(not is_24h)
-
-    def click_add_rule(self):
-        last_end = datetime.now(timezone.utc).date()
-        if self.rules:
-            last_end = self.rules[-1]["end_date"] + timedelta(days=1)
-            
-        new_rule = {
-            "phase_name": f"Phase {len(self.rules) + 1}",
-            "start_date": last_end,
-            "end_date": last_end + timedelta(days=30),
-            "start_time": time(9, 0),
-            "end_time": time(19, 0),
-            "is_24h": False
-        }
-        self.rules.append(new_rule)
-        self.populate_rule_table()
-
-    def click_delete_rule(self):
-        curr_row = self.table.currentRow()
-        if 0 <= curr_row < len(self.rules):
-            self.rules.pop(curr_row)
-            self.populate_rule_table()
-
-    def get_results(self):
-        extracted_rules = []
-        for r_idx in range(self.table.rowCount()):
-            name_widget = self.table.cellWidget(r_idx, 0)
-            s_date_widget = self.table.cellWidget(r_idx, 1)
-            e_date_widget = self.table.cellWidget(r_idx, 2)
-            s_time_widget = self.table.cellWidget(r_idx, 3)
-            e_time_widget = self.table.cellWidget(r_idx, 4)
-            chk_widget = self.table.cellWidget(r_idx, 5).findChild(QCheckBox)
-
-            phase_name = name_widget.text().strip() if name_widget else f"Phase {r_idx+1}"
-            s_date = s_date_widget.date().toPyDate() if s_date_widget else datetime.now(timezone.utc).date()
-            e_date = e_date_widget.date().toPyDate() if e_date_widget else datetime.now(timezone.utc).date()
-            is_24h = chk_widget.isChecked() if chk_widget else False
-
-            s_time = time(0, 0) if is_24h else s_time_widget.time().toPyTime()
-            e_time = time(23, 59, 59) if is_24h else e_time_widget.time().toPyTime()
-
-            extracted_rules.append({
-                "phase_name": phase_name,
-                "start_date": s_date,
-                "end_date": e_date,
-                "start_time": s_time,
-                "end_time": e_time,
-                "is_24h": is_24h
-            })
-        return extracted_rules
+from ui.dialog_gantt_chart import GanttChartDialog
+from ui.dialog_equalize_rules import EqualizeRuleDialog
+from ui.dialog_shift_rules import ShiftRuleDialog
 
 
 class PassPredictTab(QWidget):
@@ -417,19 +27,19 @@ class PassPredictTab(QWidget):
         self.main_app = main_app
         self.tle_dir = "tle"
         self.stations_dir = "stations"
+        self.plans_dir = "plans"
         self.pass_output_dir = "pass_output"
         self.color_mode = "STATION"
         
-        # 할당 대상 위성 목록 및 최소/최대 패스 지정 맵 변수
         self.equalize_target_sats = None
         self.min_pass_targets = {}
         self.max_pass_targets = {}
-        
-        # 💡 [신규] 근무 시간(Shift Hours) 규칙 변수
         self.shift_hours_rules = []
         
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
+        if not os.path.exists(self.plans_dir):
+            os.makedirs(self.plans_dir)
             
         self.init_ui()
         self.refresh_tle_files()
@@ -439,6 +49,7 @@ class PassPredictTab(QWidget):
         layout = QHBoxLayout(self)
         left_panel = QVBoxLayout()
         
+        # 1. TLE 파일 목록
         left_panel.addWidget(QLabel("<b>1. Detected TLE Files:</b>"))
         self.tle_file_list = QListWidget()
         self.tle_file_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -465,6 +76,7 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(tle_btn_layout)
         
+        # 2. 지상국 목록
         left_panel.addWidget(QLabel("<b>2. Detected Ground Stations:</b>"))
         self.gs_list = QListWidget()
         self.gs_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
@@ -481,6 +93,7 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(gs_btn_layout)
         
+        # 3. 시간 설정 (UTC)
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -496,6 +109,7 @@ class PassPredictTab(QWidget):
         self.end_time_edit.setCalendarPopup(True)
         left_panel.addWidget(self.end_time_edit)
         
+        # 4. 필터 및 스케쥴링 규칙
         left_panel.addWidget(QLabel("<b>4. Filters & Scheduling Rules:</b>"))
         el_layout = QHBoxLayout()
         el_layout.addWidget(QLabel("Min El (deg):"))
@@ -521,7 +135,6 @@ class PassPredictTab(QWidget):
         pass_no_layout.addWidget(self.start_pass_spin)
         left_panel.addLayout(pass_no_layout)
 
-        # 💡 [신규] 근무 시간(Shift Hours) 필터 활성화 체크박스 및 설정 버튼
         self.chk_use_shift_hours = QCheckBox("Apply Shift Hours Filter (UTC)")
         self.chk_use_shift_hours.setChecked(False)
         self.chk_use_shift_hours.setStyleSheet("font-weight: bold; color: #0D47A1;")
@@ -557,7 +170,7 @@ class PassPredictTab(QWidget):
         layout.addLayout(left_panel, stretch=1)
         
         # ----------------------------------------------------------------------
-        # 우측 패널 (스케쥴 테이블 / 시각화 / 외부 파일 로더)
+        # 우측 패널
         # ----------------------------------------------------------------------
         right_panel = QVBoxLayout()
         select_all_layout = QHBoxLayout()
@@ -573,15 +186,17 @@ class PassPredictTab(QWidget):
         self.combo_import_engine.setToolTip("사내 DRM(문서 보안)이 걸린 Excel 파일은 DRM Bypass 또는 Auto 모드로 읽습니다.")
         select_all_layout.addWidget(self.combo_import_engine)
 
+        # 💡 [수정 1] 외부 스케쥴 불러오기 버튼
         self.btn_import_schedule = QPushButton("📂 Import Schedule File (.xlsx / .csv / .yaml)")
         self.btn_import_schedule.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 4px 8px;")
         self.btn_import_schedule.clicked.connect(self.click_import_external_schedule)
         select_all_layout.addWidget(self.btn_import_schedule)
         
-        self.btn_open_pass_out = QPushButton("📂 Open Folder")
+        # 💡 [수정 2] Pass Output 폴더 열기 & Plan 폴더 열기 버튼 추가
+        self.btn_open_pass_out = QPushButton("📂 Open Pass Output")
         self.btn_open_pass_out.clicked.connect(lambda: self.open_local_folder(self.pass_output_dir))
-        select_all_layout.addWidget(self.btn_open_pass_out)
-        
+        select_all_layout.addWidget(self.btn_open_pass_out)       
+            
         select_all_layout.addStretch()
 
         self.chk_highlight_conflict = QCheckBox("Highlight Conflicts (⚠️)")
@@ -590,7 +205,6 @@ class PassPredictTab(QWidget):
         self.chk_highlight_conflict.toggled.connect(self.populate_table)
         select_all_layout.addWidget(self.chk_highlight_conflict)
 
-        # Color Mode 스위치 그룹
         group_color = QGroupBox("Color Mode")
         layout_color = QHBoxLayout(group_color)
         
@@ -655,102 +269,7 @@ class PassPredictTab(QWidget):
         layout.addLayout(right_panel, stretch=3)
 
     # --------------------------------------------------------------------------
-    # 💡 [신규] Shift Hours 설정 다이얼로그 호출 및 패스 검증 함수
-    # --------------------------------------------------------------------------
-    def click_open_shift_dialog(self):
-        base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
-        dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.shift_hours_rules = dialog.get_results()
-            self.chk_use_shift_hours.setChecked(True)
-            
-            info_tokens = []
-            for r in self.shift_hours_rules:
-                if r["is_24h"]:
-                    info_tokens.append(f"• {r['phase_name']}: 24H Full")
-                else:
-                    info_tokens.append(f"• {r['phase_name']}: {r['start_time'].strftime('%H:%M')}~{r['end_time'].strftime('%H:%M')} UTC")
-            
-            msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
-            QMessageBox.information(self, "Shift Rules Updated", msg)
-
-    def is_pass_in_shift_hours(self, aos_dt, los_dt):
-        """
-        AOS/LOS 시각(UTC)이 해당 날짜의 Shift Hours 범위 내에 있는지 검증
-        """
-        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
-            return True
-
-        pass_date = aos_dt.date()
-        pass_start_time = aos_dt.time()
-        pass_end_time = los_dt.time()
-
-        for rule in self.shift_hours_rules:
-            if rule["start_date"] <= pass_date <= rule["end_date"]:
-                if rule.get("is_24h", False):
-                    return True
-                
-                s_time = rule["start_time"]
-                e_time = rule["end_time"]
-
-                # 주간 근무 (예: 09:00 ~ 19:00 UTC)
-                if s_time <= e_time:
-                    if s_time <= pass_start_time and pass_end_time <= e_time:
-                        return True
-                # 야간 근무 (자정을 넘기는 근무, 예: 22:00 ~ 06:00 UTC)
-                else:
-                    if pass_start_time >= s_time or pass_end_time <= e_time:
-                        return True
-                return False
-
-        # 정의된 규칙 날짜 범위를 벗어난 경우 허용
-        return True
-
-    # --------------------------------------------------------------------------
-    # 스케쥴 연산 및 패스 필터 연동
-    # --------------------------------------------------------------------------
-    def run_scheduling(self):
-        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
-        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
-        selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
-        
-        start_dt = self.start_time_edit.dateTime().toPyDateTime()
-        end_dt = self.end_time_edit.dateTime().toPyDateTime()
-        if start_dt >= end_dt:
-            QMessageBox.critical(self, "Time Window Error", "Start Time must be earlier than End Time!")
-            return
-            
-        min_el = self.min_el_spin.value()
-        min_dur = self.min_dur_spin.value()
-        start_pass_no = self.start_pass_spin.value()
-        equalize = self.chk_equalize_sat.isChecked()
-        
-        if not tle_data or not selected_stations:
-            QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
-            return
-            
-        # 1. 1차 물리적 패스 계산
-        raw_passes = calculate_passes(
-            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
-            equalize_allocation=equalize,
-            equalize_target_sats=self.equalize_target_sats,
-            min_pass_targets=self.min_pass_targets,
-            max_pass_targets=self.max_pass_targets
-        )
-
-        # 2. 근무 시간(Shift Hours Filter) 필터링 적용
-        if self.chk_use_shift_hours.isChecked():
-            filtered_passes = [
-                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'])
-            ]
-            self.main_app.calculated_passes = filtered_passes
-        else:
-            self.main_app.calculated_passes = raw_passes
-
-        self.populate_table()
-
-    # --------------------------------------------------------------------------
-    # 외부 파일 로더 연동
+    # 💡 [수정] 외부 생성/Export 스케쥴 파일 역로딩 처리 (getOpenFileName 사용)
     # --------------------------------------------------------------------------
     def click_import_external_schedule(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -958,8 +477,89 @@ class PassPredictTab(QWidget):
         return datetime.now(timezone.utc).replace(tzinfo=None)
 
     # --------------------------------------------------------------------------
-    # 기존 UI 조작 및 이벤트 메서드
+    # 기존 이벤트 및 제어 메서드
     # --------------------------------------------------------------------------
+    def click_open_shift_dialog(self):
+        base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
+        dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.shift_hours_rules = dialog.get_results()
+            self.chk_use_shift_hours.setChecked(True)
+            
+            info_tokens = []
+            for r in self.shift_hours_rules:
+                if r["is_24h"]:
+                    info_tokens.append(f"• {r['phase_name']}: 24H Full")
+                else:
+                    info_tokens.append(f"• {r['phase_name']}: {r['start_time'].strftime('%H:%M')}~{r['end_time'].strftime('%H:%M')} UTC")
+            
+            msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
+            QMessageBox.information(self, "Shift Rules Updated", msg)
+
+    def is_pass_in_shift_hours(self, aos_dt, los_dt):
+        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
+            return True
+
+        pass_date = aos_dt.date()
+        pass_start_time = aos_dt.time()
+        pass_end_time = los_dt.time()
+
+        for rule in self.shift_hours_rules:
+            if rule["start_date"] <= pass_date <= rule["end_date"]:
+                if rule.get("is_24h", False):
+                    return True
+                
+                s_time = rule["start_time"]
+                e_time = rule["end_time"]
+
+                if s_time <= e_time:
+                    if s_time <= pass_start_time and pass_end_time <= e_time:
+                        return True
+                else:
+                    if pass_start_time >= s_time or pass_end_time <= e_time:
+                        return True
+                return False
+
+        return True
+
+    def run_scheduling(self):
+        selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
+        tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
+        selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
+        
+        start_dt = self.start_time_edit.dateTime().toPyDateTime()
+        end_dt = self.end_time_edit.dateTime().toPyDateTime()
+        if start_dt >= end_dt:
+            QMessageBox.critical(self, "Time Window Error", "Start Time must be earlier than End Time!")
+            return
+            
+        min_el = self.min_el_spin.value()
+        min_dur = self.min_dur_spin.value()
+        start_pass_no = self.start_pass_spin.value()
+        equalize = self.chk_equalize_sat.isChecked()
+        
+        if not tle_data or not selected_stations:
+            QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
+            return
+            
+        raw_passes = calculate_passes(
+            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
+            equalize_allocation=equalize,
+            equalize_target_sats=self.equalize_target_sats,
+            min_pass_targets=self.min_pass_targets,
+            max_pass_targets=self.max_pass_targets
+        )
+
+        if self.chk_use_shift_hours.isChecked():
+            filtered_passes = [
+                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'])
+            ]
+            self.main_app.calculated_passes = filtered_passes
+        else:
+            self.main_app.calculated_passes = raw_passes
+
+        self.populate_table()
+
     def click_open_equalize_dialog(self):
         selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
         tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
