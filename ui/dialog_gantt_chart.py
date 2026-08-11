@@ -31,9 +31,11 @@ class GanttChartDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        plt.style.use('dark_background')
-        self.fig, ax = plt.subplots(figsize=(12, 6), facecolor='#1E1E1E')
-        ax.set_facecolor('#262626')
+        
+        # 💡 [수정] 라이트 모드 (하얀색 기본 테마) 적용
+        plt.style.use('default')
+        self.fig, ax = plt.subplots(figsize=(12, 6), facecolor='#FFFFFF')
+        ax.set_facecolor('#F9F9F9')
         
         stations = sorted(list({p['station'] for p in self.passes}))
         st_y_map = {st: i for i, st in enumerate(stations)}
@@ -54,13 +56,13 @@ class GanttChartDialog(QDialog):
             if is_selected:
                 hex_color, _ = color_manager.get_colors(sat_raw)
                 face_color = f"#{hex_color}"
-                edge_color = "#FFFFFF"
-                alpha = 0.95
+                edge_color = "#333333"
+                alpha = 0.90
                 hatch = None
             else:
-                face_color = "#3A3A3A"
+                face_color = "#E0E0E0"
                 edge_color = "#D32F2F"
-                alpha = 0.6
+                alpha = 0.7
                 hatch = "///"
 
             ax.barh(y_pos, width, left=aos_num, height=0.45, 
@@ -77,16 +79,17 @@ class GanttChartDialog(QDialog):
                 except Exception:
                     pass
 
+        # 💡 축, 그리드, 폰트 색상을 밝은 배경용으로 조정
         ax.set_yticks(range(len(stations)))
-        ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#FFFFFF')
+        ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#222222')
         ax.xaxis_date()
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M', tz=timezone.utc))
         self.fig.autofmt_xdate()
         
         ax.set_title("Timeline Matrix: Allocated Passes (Solid Pastel) vs Collided / Blocked (Hatched Gray)", 
-                     fontsize=12, fontweight='bold', color='#FFFFFF', pad=15)
-        ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#DDDDDD')
-        ax.grid(True, linestyle=':', alpha=0.35, color='#999999')
+                     fontsize=12, fontweight='bold', color='#111111', pad=15)
+        ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#333333')
+        ax.grid(True, linestyle=':', alpha=0.6, color='#CCCCCC')
         
         if stations:
             ax.set_ylim(-0.6, len(stations) - 0.4)
@@ -99,7 +102,7 @@ class GanttChartDialog(QDialog):
         layout.addWidget(canvas)
         
         btn_close = QPushButton("Close Timeline Chart")
-        btn_close.setStyleSheet("background-color: #333333; color: white; font-weight: bold; padding: 6px;")
+        btn_close.setStyleSheet("background-color: #1976D2; color: white; font-weight: bold; padding: 6px;")
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
 
