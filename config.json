@@ -20,6 +20,7 @@
         "equalize_target_sats": null,
         "min_pass_targets": {},
         "max_pass_targets": {},
-        "color_mode": "STATION"
+        "color_mode": "STATION",
+        "display_tz": "UTC"
     }
 }

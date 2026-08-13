@@ -6,6 +6,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 
 from core.color_manager import color_manager
+from core.timezone_manager import tz_manager
 
 
 class HighVisibilityNavigationToolbar(NavigationToolbar):
@@ -21,18 +22,19 @@ class HighVisibilityNavigationToolbar(NavigationToolbar):
 
 
 class GanttChartDialog(QDialog):
-    def __init__(self, calculated_passes, parent=None):
+    def __init__(self, calculated_passes, color_mode="STATION", parent=None):
         super().__init__(parent)
         self.setWindowTitle("📊 Multi-Satellite Pass Allocation Gantt Timeline")
         self.resize(1150, 680)
         self.passes = calculated_passes
+        self.color_mode = color_mode
         self.fig = None
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # 💡 [수정] 라이트 모드 (하얀색 기본 테마) 적용
+        # 라이트 모드 기본 테마
         plt.style.use('default')
         self.fig, ax = plt.subplots(figsize=(12, 6), facecolor='#FFFFFF')
         ax.set_facecolor('#F9F9F9')
@@ -45,16 +47,22 @@ class GanttChartDialog(QDialog):
             sat_raw = p['satellite']
             
             y_pos = st_y_map[st]
-            aos_dt = p['aos']
-            los_dt = p['los']
+            
+            # 💡 [핵심] tz_manager를 이용해 KST / UTC 타임존 시간으로 변환
+            aos_local = tz_manager.convert_dt(p['aos'])
+            los_local = tz_manager.convert_dt(p['los'])
             is_selected = p.get('selected', True)
             
-            aos_num = mdates.date2num(aos_dt)
-            los_num = mdates.date2num(los_dt)
+            aos_num = mdates.date2num(aos_local)
+            los_num = mdates.date2num(los_local)
             width = los_num - aos_num
             
+            # 색상 모드(By Satellite / By Station) 반영
             if is_selected:
-                hex_color, _ = color_manager.get_colors(sat_raw)
+                if self.color_mode == "SATELLITE":
+                    hex_color, _ = color_manager.get_colors(sat_raw)
+                else:
+                    hex_color, _ = color_manager.get_station_colors(st)
                 face_color = f"#{hex_color}"
                 edge_color = "#333333"
                 alpha = 0.90
@@ -79,16 +87,19 @@ class GanttChartDialog(QDialog):
                 except Exception:
                     pass
 
-        # 💡 축, 그리드, 폰트 색상을 밝은 배경용으로 조정
+        # Y축 지상국 라벨 설정
         ax.set_yticks(range(len(stations)))
         ax.set_yticklabels(stations, fontsize=11, fontweight='bold', color='#222222')
         ax.xaxis_date()
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M', tz=timezone.utc))
+        
+        # 💡 [핵심] 현재 선택된 타임존(UTC / KST) 표기 및 DateFormatter 반영
+        tz_label = tz_manager.current_tz
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
         self.fig.autofmt_xdate()
         
-        ax.set_title("Timeline Matrix: Allocated Passes (Solid Pastel) vs Collided / Blocked (Hatched Gray)", 
+        ax.set_title("Timeline Matrix: Allocated Passes (Solid) vs Collided / Blocked (Hatched Gray)", 
                      fontsize=12, fontweight='bold', color='#111111', pad=15)
-        ax.set_xlabel("Time (UTC)", fontsize=10, fontweight='bold', color='#333333')
+        ax.set_xlabel(f"Time ({tz_label})", fontsize=10, fontweight='bold', color='#333333')
         ax.grid(True, linestyle=':', alpha=0.6, color='#CCCCCC')
         
         if stations:

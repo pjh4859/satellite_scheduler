@@ -6,13 +6,14 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
                              QRadioButton, QGroupBox, QComboBox)
-from PyQt6.QtCore import Qt, QUrl, QDateTime
+from PyQt6.QtCore import Qt, QUrl, QDateTime, QTimer
 from PyQt6.QtGui import QColor, QFont, QDesktopServices
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
 from core.config_manager import config_manager
+from core.timezone_manager import tz_manager
 
 from ui.dialog_tle_generator import TleFromSepVectorDialog
 from ui.dialog_gantt_chart import GanttChartDialog
@@ -20,6 +21,7 @@ from ui.dialog_equalize_rules import EqualizeRuleDialog
 from ui.dialog_shift_rules import ShiftRuleDialog
 from ui.tab1_file_loader import ExternalScheduleLoader
 from ui.dialog_orbit_map import OrbitMapDialog
+
 
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
@@ -41,11 +43,16 @@ class PassPredictTab(QWidget):
         if not os.path.exists(self.plans_dir):
             os.makedirs(self.plans_dir)
             
+        # 💡 실시간 카운트다운용 QTimer 생성 (1초 주기)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_countdown)
+        self.timer.start(1000)
+            
         self.init_ui()
         self.refresh_tle_files()
         self.refresh_stations()
         
-        # 💡 이전 세팅 자동 복원 (시간 Window 포함)
+        # 💡 이전 세팅 자동 복원
         self.restore_settings()
 
     def init_ui(self):
@@ -98,7 +105,7 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(gs_btn_layout)
         
-        # 3. 시간 설정 (UTC) - 💡 시간 변경 시에도 save_settings 연결
+        # 3. 시간 설정 (UTC 기준)
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -185,6 +192,25 @@ class PassPredictTab(QWidget):
         # 우측 패널
         # ----------------------------------------------------------------------
         right_panel = QVBoxLayout()
+        
+        # 💡 [신규] 상단 실시간 카운트다운 & 타임존 셀렉터 컨트롤 바
+        top_tz_bar = QHBoxLayout()
+        
+        self.lbl_countdown = QLabel("⏳ Next Pass: No passes scheduled")
+        self.lbl_countdown.setStyleSheet(
+            "font-size: 13px; font-weight: bold; color: #0D47A1; "
+            "background-color: #E3F2FD; padding: 6px 12px; border-radius: 4px;"
+        )
+        top_tz_bar.addWidget(self.lbl_countdown, stretch=1)
+        
+        top_tz_bar.addWidget(QLabel("<b>🌐 Timezone Display:</b>"))
+        self.combo_tz = QComboBox()
+        self.combo_tz.addItems(["UTC", "KST (UTC+9)"])
+        self.combo_tz.currentIndexChanged.connect(self.on_timezone_changed)
+        top_tz_bar.addWidget(self.combo_tz)
+        
+        right_panel.addLayout(top_tz_bar)
+
         select_all_layout = QHBoxLayout()
         select_all_layout.addWidget(QLabel("<b>Pass Prediction Timeline Matrix:</b>"))
 
@@ -247,10 +273,10 @@ class PassPredictTab(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
-            "Select", "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS (UTC)", "LOS (UTC)", "Duration (s)", "Max El (deg)", "Status"
+            "Select", "Ground Station", "Satellite", "Pass No. (Orbit)", "AOS", "LOS", "Duration (s)", "Max El (deg)", "Status"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setDefaultSectionSize(140)
+        self.table.horizontalHeader().setDefaultSectionSize(145)
         
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
@@ -262,7 +288,6 @@ class PassPredictTab(QWidget):
         self.btn_gantt_chart.clicked.connect(self.click_view_gantt_chart)
         btn_layout.addWidget(self.btn_gantt_chart)
 
-        # 💡 [신규] 2D Orbit Map 버튼 추가
         self.btn_orbit_map = QPushButton("🌐 View 2D Orbit Map")
         self.btn_orbit_map.setStyleSheet("background-color: #00796B; color: white; font-weight: bold;")
         self.btn_orbit_map.clicked.connect(self.click_view_orbit_map)
@@ -285,10 +310,98 @@ class PassPredictTab(QWidget):
         layout.addLayout(right_panel, stretch=3)
 
     # --------------------------------------------------------------------------
+    # ⏰ 실시간 카운트다운 & 타임존 이벤트
+    # --------------------------------------------------------------------------
+    def on_timezone_changed(self, idx):
+        """타임존 콤보박스 변경 시 호출"""
+        selected_tz = "KST" if idx == 1 else "UTC"
+        tz_manager.set_timezone(selected_tz)
+        
+        # 테이블 컬럼 헤더 갱신
+        tz_str = tz_manager.current_tz
+        self.table.setHorizontalHeaderItem(4, QTableWidgetItem(f"AOS ({tz_str})"))
+        self.table.setHorizontalHeaderItem(5, QTableWidgetItem(f"LOS ({tz_str})"))
+        
+        self.populate_table()
+
+    def update_countdown(self):
+        """1초 주기로 실시간 카운트다운 타이머 갱신"""
+        if not getattr(self.main_app, 'calculated_passes', None):
+            self.lbl_countdown.setText("⏳ Next Pass: No passes scheduled")
+            self.lbl_countdown.setStyleSheet(
+                "font-size: 13px; font-weight: bold; color: #555555; "
+                "background-color: #F5F5F5; padding: 6px 12px; border-radius: 4px;"
+            )
+            return
+
+        now_utc = datetime.now(timezone.utc)
+        selected_passes = [p for p in self.main_app.calculated_passes if p.get('selected', True)]
+        
+        if not selected_passes:
+            self.lbl_countdown.setText("⏳ Next Pass: No pass selected")
+            return
+
+        next_pass = None
+        in_progress_pass = None
+        
+        for p in sorted(selected_passes, key=lambda x: x['aos']):
+            aos_utc = p['aos'].replace(tzinfo=timezone.utc) if p['aos'].tzinfo is None else p['aos']
+            los_utc = p['los'].replace(tzinfo=timezone.utc) if p['los'].tzinfo is None else p['los']
+            
+            if aos_utc <= now_utc <= los_utc:
+                in_progress_pass = p
+                break
+            elif aos_utc > now_utc:
+                next_pass = p
+                break
+
+        if in_progress_pass:
+            los_utc = in_progress_pass['los'].replace(tzinfo=timezone.utc) if in_progress_pass['los'].tzinfo is None else in_progress_pass['los']
+            rem = los_utc - now_utc
+            m, s = divmod(int(rem.total_seconds()), 60)
+            h, m = divmod(m, 60)
+            
+            sat = in_progress_pass['satellite'].split('(')[0].strip()
+            st = in_progress_pass['station']
+            
+            self.lbl_countdown.setText(f"🟢 PASS IN PROGRESS | 🛰️ {sat} @ {st} | LOS in {h:02d}:{m:02d}:{s:02d}")
+            self.lbl_countdown.setStyleSheet(
+                "font-size: 13px; font-weight: bold; color: #FFFFFF; "
+                "background-color: #2E7D32; padding: 6px 12px; border-radius: 4px;"
+            )
+        elif next_pass:
+            aos_utc = next_pass['aos'].replace(tzinfo=timezone.utc) if next_pass['aos'].tzinfo is None else next_pass['aos']
+            diff = aos_utc - now_utc
+            total_sec = int(diff.total_seconds())
+            
+            days, remainder = divmod(total_sec, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            sat = next_pass['satellite'].split('(')[0].strip()
+            st = next_pass['station']
+            
+            if days > 0:
+                time_str = f"{days}d {hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                
+            self.lbl_countdown.setText(f"⏳ Next AOS in {time_str} | 🛰️ {sat} @ {st}")
+            self.lbl_countdown.setStyleSheet(
+                "font-size: 13px; font-weight: bold; color: #0D47A1; "
+                "background-color: #E3F2FD; padding: 6px 12px; border-radius: 4px;"
+            )
+        else:
+            self.lbl_countdown.setText("✅ All scheduled passes completed")
+            self.lbl_countdown.setStyleSheet(
+                "font-size: 13px; font-weight: bold; color: #424242; "
+                "background-color: #E0E0E0; padding: 6px 12px; border-radius: 4px;"
+            )
+
+    # --------------------------------------------------------------------------
     # 💾 설정 저장 및 복원 (Config Persistence)
     # --------------------------------------------------------------------------
     def save_settings(self):
-        """현재 UI 설정 및 규칙들을 config.json에 저장"""
         if getattr(self, 'is_restoring', False):
             return
 
@@ -306,7 +419,6 @@ class PassPredictTab(QWidget):
                 "is_24h": r.get("is_24h", False)
             })
 
-        # 💡 Start / End Time 문자열 저장
         start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
         end_dt_str = self.end_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
 
@@ -325,12 +437,12 @@ class PassPredictTab(QWidget):
             "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
             "min_pass_targets": self.min_pass_targets,
             "max_pass_targets": self.max_pass_targets,
-            "color_mode": self.color_mode
+            "color_mode": self.color_mode,
+            "display_tz": tz_manager.current_tz
         }
         config_manager.save_config(config_data)
 
     def restore_settings(self):
-        """config.json에서 이전 설정을 읽어와 UI에 자동 복원"""
         config_data = config_manager.load_config()
         tab1_cfg = config_data.get("tab1", {})
         if not tab1_cfg:
@@ -339,7 +451,6 @@ class PassPredictTab(QWidget):
         self.is_restoring = True
         self.blockSignals(True)
         try:
-            # 💡 1. Start / End Time Window 복원
             if "start_time_utc" in tab1_cfg:
                 s_qdt = QDateTime.fromString(tab1_cfg["start_time_utc"], "yyyy-MM-dd HH:mm:ss")
                 if s_qdt.isValid():
@@ -350,14 +461,12 @@ class PassPredictTab(QWidget):
                 if e_qdt.isValid():
                     self.end_time_edit.setDateTime(e_qdt)
 
-            # 2. 필터 값 복원
             if "min_el" in tab1_cfg: self.min_el_spin.setValue(tab1_cfg["min_el"])
             if "min_dur" in tab1_cfg: self.min_dur_spin.setValue(tab1_cfg["min_dur"])
             if "start_pass_no" in tab1_cfg: self.start_pass_spin.setValue(tab1_cfg["start_pass_no"])
             if "use_shift_hours" in tab1_cfg: self.chk_use_shift_hours.setChecked(tab1_cfg["use_shift_hours"])
             if "use_equalize" in tab1_cfg: self.chk_equalize_sat.setChecked(tab1_cfg["use_equalize"])
 
-            # 3. Shift Hours 규칙 복원
             raw_rules = tab1_cfg.get("shift_hours_rules", [])
             restored_rules = []
             for r in raw_rules:
@@ -379,13 +488,11 @@ class PassPredictTab(QWidget):
             if restored_rules:
                 self.shift_hours_rules = restored_rules
 
-            # 4. Equalize 규칙 복원
             if tab1_cfg.get("equalize_target_sats") is not None:
                 self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
             self.min_pass_targets = tab1_cfg.get("min_pass_targets", {})
             self.max_pass_targets = tab1_cfg.get("max_pass_targets", {})
 
-            # 5. TLE 선택 항목 복원 (저장된 정보가 없으면 전체 선택)
             saved_tle = set(tab1_cfg.get("selected_tle_files", []))
             for i in range(self.tle_file_list.count()):
                 item = self.tle_file_list.item(i)
@@ -394,7 +501,6 @@ class PassPredictTab(QWidget):
                 else:
                     item.setSelected(True)
 
-            # 6. 지상국 선택 항목 복원 (저장된 정보가 없으면 전체 선택)
             saved_gs = set(tab1_cfg.get("selected_gs_items", []))
             for i in range(self.gs_list.count()):
                 item = self.gs_list.item(i)
@@ -403,12 +509,18 @@ class PassPredictTab(QWidget):
                 else:
                     item.setSelected(True)
 
-            # 7. Color Mode 복원
             color_mode = tab1_cfg.get("color_mode", "STATION")
             if color_mode == "SATELLITE":
                 self.radio_color_sat.setChecked(True)
             else:
                 self.radio_color_station.setChecked(True)
+
+            # 타임존 설정 복원
+            saved_tz = tab1_cfg.get("display_tz", "UTC")
+            if saved_tz == "KST":
+                self.combo_tz.setCurrentIndex(1)
+            else:
+                self.combo_tz.setCurrentIndex(0)
         finally:
             self.blockSignals(False)
             self.is_restoring = False
@@ -445,9 +557,6 @@ class PassPredictTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
-    # --------------------------------------------------------------------------
-    # 기존 제어 이벤트 핸들러
-    # --------------------------------------------------------------------------
     def click_open_shift_dialog(self):
         base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
         dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
@@ -725,8 +834,9 @@ class PassPredictTab(QWidget):
                 self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))
                 
-                aos_val = p['aos'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['aos'], datetime) else str(p['aos'])
-                los_val = p['los'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['los'], datetime) else str(p['los'])
+                # 💡 [핵심] tz_manager를 연동한 동적 타임존 시각 문자열 변환
+                aos_val = tz_manager.format_datetime(p['aos'])
+                los_val = tz_manager.format_datetime(p['los'])
                 
                 self.table.setItem(row_idx, 4, QTableWidgetItem(aos_val))
                 self.table.setItem(row_idx, 5, QTableWidgetItem(los_val))
@@ -771,21 +881,26 @@ class PassPredictTab(QWidget):
         if not self.main_app.calculated_passes:
             QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
             return
-        dialog = GanttChartDialog(self.main_app.calculated_passes, self)
+        # 💡 [수정] color_mode 매개변수 함께 전달
+        dialog = GanttChartDialog(
+            calculated_passes=self.main_app.calculated_passes,
+            color_mode=self.color_mode,
+            parent=self
+        )
         dialog.exec()
 
     def click_view_orbit_map(self):
-     if not self.main_app.calculated_passes:
-         QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
-         return
+        if not self.main_app.calculated_passes:
+            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
+            return
 
-     dialog = OrbitMapDialog(
-         calculated_passes=self.main_app.calculated_passes,
-         station_data=self.main_app.station_data,
-         color_mode=self.color_mode,
-         parent=self
-     )
-     dialog.exec()
+        dialog = OrbitMapDialog(
+            calculated_passes=self.main_app.calculated_passes,
+            station_data=self.main_app.station_data,
+            color_mode=self.color_mode,
+            parent=self
+        )
+        dialog.exec()
 
     def handle_table_lock(self, item):
         if self.main_app.is_populating or item.column() != 0: return
