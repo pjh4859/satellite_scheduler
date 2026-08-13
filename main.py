@@ -4,10 +4,19 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from ui.main_window import SatelliteSchedulerApp
 
+def get_resource_path(relative_path):
+    """PyInstaller (EXE) 환경 및 일반 실행 환경 모두에서 파일 경로를 안전하게 찾아주는 함수"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    return os.path.join(base_path, relative_path)
+
 def main():
     app = QApplication(sys.argv)
     
-    # 💡 윈도우 작업 표시줄(Taskbar)에서 다른 앱과 겹치지 않고 독립 아이콘으로 표출되도록 설정
+    # 윈도우 작업 표시줄(Taskbar) 독립 아이콘 지정
     try:
         from ctypes import windll
         myappid = 'space.satellitescheduler.leop.1.0.4'
@@ -15,9 +24,8 @@ def main():
     except Exception:
         pass
 
-    # 💡 main.py와 같은 위치에 있는 app_icon.ico 로드 및 적용
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(base_dir, "app_icon.ico")
+    # 💡 assets/app_icon.ico 경로 지정
+    icon_path = get_resource_path(os.path.join("assets", "app_icon.ico"))
     
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
