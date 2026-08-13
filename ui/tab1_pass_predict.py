@@ -21,7 +21,8 @@ from ui.dialog_equalize_rules import EqualizeRuleDialog
 from ui.dialog_shift_rules import ShiftRuleDialog
 from ui.tab1_file_loader import ExternalScheduleLoader
 from ui.dialog_orbit_map import OrbitMapDialog
-
+from core.conflict_resolver import resolve_conflicts
+from ui.dialog_conflict_solver import ConflictSolverDialog
 
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
@@ -288,6 +289,11 @@ class PassPredictTab(QWidget):
         self.btn_gantt_chart.clicked.connect(self.click_view_gantt_chart)
         btn_layout.addWidget(self.btn_gantt_chart)
 
+        self.btn_auto_resolve = QPushButton("⚡ Auto Resolve")
+        self.btn_auto_resolve.setStyleSheet("background-color: #D81B60; color: white; font-weight: bold;")
+        self.btn_auto_resolve.clicked.connect(self.click_auto_resolve)
+        select_all_layout.addWidget(self.btn_auto_resolve)
+
         self.btn_orbit_map = QPushButton("🌐 View 2D Orbit Map")
         self.btn_orbit_map.setStyleSheet("background-color: #00796B; color: white; font-weight: bold;")
         self.btn_orbit_map.clicked.connect(self.click_view_orbit_map)
@@ -441,6 +447,37 @@ class PassPredictTab(QWidget):
             "display_tz": tz_manager.current_tz
         }
         config_manager.save_config(config_data)
+
+    def click_auto_resolve(self):
+        if not getattr(self.main_app, 'calculated_passes', None):
+            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
+            return
+
+        # 모든 위성 목록 수집
+        all_sats = set()
+        for p in self.main_app.calculated_passes:
+            sat_clean = p['satellite'].split('(')[0].strip()
+            all_sats.add(sat_clean)
+
+        dialog = ConflictSolverDialog(all_satellites=all_sats, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            rule, sat_priorities = dialog.get_results()
+
+            # 충돌 해결 엔진 실행
+            resolved_passes = resolve_conflicts(
+                passes=self.main_app.calculated_passes,
+                rule=rule,
+                sat_priorities=sat_priorities
+            )
+            self.main_app.calculated_passes = resolved_passes
+
+            # 테이블 및 요약 패널 UI 재갱신
+            self.populate_table()
+
+            QMessageBox.information(
+                self, "Auto Resolution Complete", 
+                f"Successfully resolved conflicts using '{rule}' strategy!"
+            )
 
     def restore_settings(self):
         config_data = config_manager.load_config()
@@ -903,37 +940,23 @@ class PassPredictTab(QWidget):
         dialog.exec()
 
     def handle_table_lock(self, item):
-        if self.main_app.is_populating or item.column() != 0: return
-        user_data = item.data(Qt.ItemDataRole.UserRole)
-        if not user_data: return
-            
-        current_row, group_id, station_name = user_data
-        if group_id is None:
-            self.main_app.calculated_passes[current_row]['selected'] = (item.checkState() == Qt.CheckState.Checked)
-            self.update_summary_dashboard()
+        """테이블 체크박스 상태 변경 핸들러 (충돌 패스 다중 자유 체크 허용)"""
+        if self.main_app.is_populating or item.column() != 0:
             return
             
-        if item.checkState() == Qt.CheckState.Checked:
-            self.main_app.is_populating = True
-            try:
-                for r in range(self.table.rowCount()):
-                    if r == current_row:
-                        self.main_app.calculated_passes[r]['selected'] = True
-                        continue
-                    other_item = self.table.item(r, 0)
-                    if other_item is not None and other_item.data(Qt.ItemDataRole.UserRole) is not None:
-                        o_row, o_group, o_station = other_item.data(Qt.ItemDataRole.UserRole)
-                        if o_station == station_name and o_group == group_id:
-                            other_item.setCheckState(Qt.CheckState.Unchecked)
-                            self.main_app.calculated_passes[r]['selected'] = False
-            finally:
-                self.main_app.is_populating = False
-            self.populate_table()
-        else:
-            self.main_app.calculated_passes[current_row]['selected'] = False
-            self.main_app.is_populating = True
-            try: self.populate_table()
-            finally: self.main_app.is_populating = False
+        user_data = item.data(Qt.ItemDataRole.UserRole)
+        if not user_data:
+            return
+            
+        current_row, group_id, station_name = user_data
+        
+        # 💡 [핵심] 다른 충돌 패스를 강제로 Uncheck/Lock하던 제약을 제거합니다.
+        # 사용자가 체크한 상태(Checked / Unchecked)를 백엔드 데이터에 독립적으로 반영합니다.
+        is_checked = (item.checkState() == Qt.CheckState.Checked)
+        self.main_app.calculated_passes[current_row]['selected'] = is_checked
+        
+        # 요약 패널(Summary Dashboard) 실시간 계산 갱신
+        self.update_summary_dashboard()
 
     def click_export_csv(self):
         if not self.main_app.calculated_passes: return
