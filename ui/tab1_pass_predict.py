@@ -19,7 +19,7 @@ from ui.dialog_gantt_chart import GanttChartDialog
 from ui.dialog_equalize_rules import EqualizeRuleDialog
 from ui.dialog_shift_rules import ShiftRuleDialog
 from ui.tab1_file_loader import ExternalScheduleLoader
-
+from ui.dialog_orbit_map import OrbitMapDialog
 
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
@@ -261,6 +261,12 @@ class PassPredictTab(QWidget):
         self.btn_gantt_chart.setStyleSheet("background-color: #6A1B9A; color: white; font-weight: bold;")
         self.btn_gantt_chart.clicked.connect(self.click_view_gantt_chart)
         btn_layout.addWidget(self.btn_gantt_chart)
+
+        # 💡 [신규] 2D Orbit Map 버튼 추가
+        self.btn_orbit_map = QPushButton("🌐 View 2D Orbit Map")
+        self.btn_orbit_map.setStyleSheet("background-color: #00796B; color: white; font-weight: bold;")
+        self.btn_orbit_map.clicked.connect(self.click_view_orbit_map)
+        btn_layout.addWidget(self.btn_orbit_map)
         
         self.btn_csv = QPushButton("Export Selected to CSV")
         self.btn_csv.clicked.connect(self.click_export_csv)
@@ -767,6 +773,19 @@ class PassPredictTab(QWidget):
             return
         dialog = GanttChartDialog(self.main_app.calculated_passes, self)
         dialog.exec()
+
+    def click_view_orbit_map(self):
+     if not self.main_app.calculated_passes:
+         QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
+         return
+
+     dialog = OrbitMapDialog(
+         calculated_passes=self.main_app.calculated_passes,
+         station_data=self.main_app.station_data,
+         color_mode=self.color_mode,
+         parent=self
+     )
+     dialog.exec()
 
     def handle_table_lock(self, item):
         if self.main_app.is_populating or item.column() != 0: return
