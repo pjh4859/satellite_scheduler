@@ -23,7 +23,7 @@ from ui.tab1_file_loader import ExternalScheduleLoader
 from ui.dialog_orbit_map import OrbitMapDialog
 from core.conflict_resolver import resolve_conflicts
 from ui.dialog_conflict_solver import ConflictSolverDialog
-
+from ui.dialog_analytics import AnalyticsDashboardDialog
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
@@ -298,6 +298,11 @@ class PassPredictTab(QWidget):
         self.btn_orbit_map.setStyleSheet("background-color: #00796B; color: white; font-weight: bold;")
         self.btn_orbit_map.clicked.connect(self.click_view_orbit_map)
         btn_layout.addWidget(self.btn_orbit_map)
+
+        self.btn_analytics = QPushButton("📊 View Analytics Report")
+        self.btn_analytics.setStyleSheet("background-color: #D81B60; color: white; font-weight: bold;")
+        self.btn_analytics.clicked.connect(self.click_view_analytics)
+        btn_layout.addWidget(self.btn_analytics)
         
         self.btn_csv = QPushButton("Export Selected to CSV")
         self.btn_csv.clicked.connect(self.click_export_csv)
@@ -329,6 +334,22 @@ class PassPredictTab(QWidget):
         self.table.setHorizontalHeaderItem(5, QTableWidgetItem(f"LOS ({tz_str})"))
         
         self.populate_table()
+
+    def click_view_analytics(self):
+        if not getattr(self.main_app, 'calculated_passes', None):
+            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
+            return
+
+        start_dt = self.start_time_edit.dateTime().toPyDateTime()
+        end_dt = self.end_time_edit.dateTime().toPyDateTime()
+
+        dialog = AnalyticsDashboardDialog(
+            calculated_passes=self.main_app.calculated_passes,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            parent=self
+        )
+        dialog.exec()
 
     def update_countdown(self):
         """1초 주기로 실시간 카운트다운 타이머 갱신"""
