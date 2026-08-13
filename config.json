@@ -1,0 +1,25 @@
+{
+    "tab1": {
+        "start_time_utc": "2026-10-13 13:53:43",
+        "end_time_utc": "2026-10-14 13:53:43",
+        "selected_tle_files": [
+            "NEONSAT-1.tle",
+            "NEONSAT-1A.tle"
+        ],
+        "selected_gs_items": [
+            "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y]",
+            "Svalbard (Lat: 78.23, Lon: 15.49) [Down:N / Cmd:Y]",
+            "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y]"
+        ],
+        "min_el": 5,
+        "min_dur": 300,
+        "start_pass_no": 1,
+        "use_shift_hours": false,
+        "shift_hours_rules": [],
+        "use_equalize": true,
+        "equalize_target_sats": null,
+        "min_pass_targets": {},
+        "max_pass_targets": {},
+        "color_mode": "STATION"
+    }
+}

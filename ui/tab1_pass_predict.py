@@ -1,24 +1,24 @@
 import os
-import csv
-import yaml
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time, date
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, 
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
                              QRadioButton, QGroupBox, QComboBox)
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QDateTime
 from PyQt6.QtGui import QColor, QFont, QDesktopServices
 
 from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
+from core.config_manager import config_manager
 
 from ui.dialog_tle_generator import TleFromSepVectorDialog
 from ui.dialog_gantt_chart import GanttChartDialog
 from ui.dialog_equalize_rules import EqualizeRuleDialog
 from ui.dialog_shift_rules import ShiftRuleDialog
+from ui.tab1_file_loader import ExternalScheduleLoader
 
 
 class PassPredictTab(QWidget):
@@ -44,6 +44,9 @@ class PassPredictTab(QWidget):
         self.init_ui()
         self.refresh_tle_files()
         self.refresh_stations()
+        
+        # 💡 이전 세팅 자동 복원 (시간 Window 포함)
+        self.restore_settings()
 
     def init_ui(self):
         layout = QHBoxLayout(self)
@@ -53,6 +56,7 @@ class PassPredictTab(QWidget):
         left_panel.addWidget(QLabel("<b>1. Detected TLE Files:</b>"))
         self.tle_file_list = QListWidget()
         self.tle_file_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.tle_file_list.itemSelectionChanged.connect(self.save_settings)
         left_panel.addWidget(self.tle_file_list)
         
         tle_btn_layout = QHBoxLayout()
@@ -80,6 +84,7 @@ class PassPredictTab(QWidget):
         left_panel.addWidget(QLabel("<b>2. Detected Ground Stations:</b>"))
         self.gs_list = QListWidget()
         self.gs_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.gs_list.itemSelectionChanged.connect(self.save_settings)
         left_panel.addWidget(self.gs_list)
         
         gs_btn_layout = QHBoxLayout()
@@ -93,7 +98,7 @@ class PassPredictTab(QWidget):
         
         left_panel.addLayout(gs_btn_layout)
         
-        # 3. 시간 설정 (UTC)
+        # 3. 시간 설정 (UTC) - 💡 시간 변경 시에도 save_settings 연결
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -101,12 +106,14 @@ class PassPredictTab(QWidget):
         self.start_time_edit = QDateTimeEdit(now_utc_naive)
         self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.start_time_edit.setCalendarPopup(True)
+        self.start_time_edit.dateTimeChanged.connect(self.save_settings)
         left_panel.addWidget(self.start_time_edit)
         
         left_panel.addWidget(QLabel("End Time:"))
         self.end_time_edit = QDateTimeEdit(now_utc_naive + timedelta(days=1))
         self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.end_time_edit.setCalendarPopup(True)
+        self.end_time_edit.dateTimeChanged.connect(self.save_settings)
         left_panel.addWidget(self.end_time_edit)
         
         # 4. 필터 및 스케쥴링 규칙
@@ -116,6 +123,7 @@ class PassPredictTab(QWidget):
         self.min_el_spin = QSpinBox()
         self.min_el_spin.setRange(0, 90)
         self.min_el_spin.setValue(5)
+        self.min_el_spin.valueChanged.connect(self.save_settings)
         el_layout.addWidget(self.min_el_spin)
         left_panel.addLayout(el_layout)
         
@@ -124,6 +132,7 @@ class PassPredictTab(QWidget):
         self.min_dur_spin = QSpinBox()
         self.min_dur_spin.setRange(0, 3600)
         self.min_dur_spin.setValue(300)
+        self.min_dur_spin.valueChanged.connect(self.save_settings)
         dur_layout.addWidget(self.min_dur_spin)
         left_panel.addLayout(dur_layout)
         
@@ -132,12 +141,14 @@ class PassPredictTab(QWidget):
         self.start_pass_spin = QSpinBox()
         self.start_pass_spin.setRange(1, 99999)
         self.start_pass_spin.setValue(1)
+        self.start_pass_spin.valueChanged.connect(self.save_settings)
         pass_no_layout.addWidget(self.start_pass_spin)
         left_panel.addLayout(pass_no_layout)
 
         self.chk_use_shift_hours = QCheckBox("Apply Shift Hours Filter (UTC)")
         self.chk_use_shift_hours.setChecked(False)
         self.chk_use_shift_hours.setStyleSheet("font-weight: bold; color: #0D47A1;")
+        self.chk_use_shift_hours.toggled.connect(self.save_settings)
         left_panel.addWidget(self.chk_use_shift_hours)
 
         self.btn_open_shift_dialog = QPushButton("⚙️ Set Work Shift Hours (UTC)")
@@ -148,6 +159,7 @@ class PassPredictTab(QWidget):
         self.chk_equalize_sat = QCheckBox("Equalize Sat Allocation (Fairness)")
         self.chk_equalize_sat.setChecked(True)
         self.chk_equalize_sat.setStyleSheet("font-weight: bold; color: #1B5E20;")
+        self.chk_equalize_sat.toggled.connect(self.save_settings)
         left_panel.addWidget(self.chk_equalize_sat)
 
         self.btn_open_equalize_dialog = QPushButton("⚙️ Set Allocation Target & Rules")
@@ -186,13 +198,11 @@ class PassPredictTab(QWidget):
         self.combo_import_engine.setToolTip("사내 DRM(문서 보안)이 걸린 Excel 파일은 DRM Bypass 또는 Auto 모드로 읽습니다.")
         select_all_layout.addWidget(self.combo_import_engine)
 
-        # 💡 [수정 1] 외부 스케쥴 불러오기 버튼
         self.btn_import_schedule = QPushButton("📂 Import Schedule File (.xlsx / .csv / .yaml)")
         self.btn_import_schedule.setStyleSheet("background-color: #0288D1; color: white; font-weight: bold; padding: 4px 8px;")
         self.btn_import_schedule.clicked.connect(self.click_import_external_schedule)
         select_all_layout.addWidget(self.btn_import_schedule)
         
-        # 💡 [수정 2] Pass Output 폴더 열기 & Plan 폴더 열기 버튼 추가
         self.btn_open_pass_out = QPushButton("📂 Open Pass Output")
         self.btn_open_pass_out.clicked.connect(lambda: self.open_local_folder(self.pass_output_dir))
         select_all_layout.addWidget(self.btn_open_pass_out)       
@@ -269,7 +279,136 @@ class PassPredictTab(QWidget):
         layout.addLayout(right_panel, stretch=3)
 
     # --------------------------------------------------------------------------
-    # 💡 [수정] 외부 생성/Export 스케쥴 파일 역로딩 처리 (getOpenFileName 사용)
+    # 💾 설정 저장 및 복원 (Config Persistence)
+    # --------------------------------------------------------------------------
+    def save_settings(self):
+        """현재 UI 설정 및 규칙들을 config.json에 저장"""
+        if getattr(self, 'is_restoring', False):
+            return
+
+        selected_tle = [item.text() for item in self.tle_file_list.selectedItems()]
+        selected_gs = [item.text() for item in self.gs_list.selectedItems()]
+
+        serialized_shift_rules = []
+        for r in self.shift_hours_rules:
+            serialized_shift_rules.append({
+                "phase_name": r.get("phase_name", ""),
+                "start_date": r["start_date"].isoformat() if isinstance(r["start_date"], date) else str(r["start_date"]),
+                "end_date": r["end_date"].isoformat() if isinstance(r["end_date"], date) else str(r["end_date"]),
+                "start_time": r["start_time"].strftime("%H:%M:%S") if isinstance(r["start_time"], time) else str(r["start_time"]),
+                "end_time": r["end_time"].strftime("%H:%M:%S") if isinstance(r["end_time"], time) else str(r["end_time"]),
+                "is_24h": r.get("is_24h", False)
+            })
+
+        # 💡 Start / End Time 문자열 저장
+        start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+        end_dt_str = self.end_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+
+        config_data = config_manager.load_config()
+        config_data["tab1"] = {
+            "start_time_utc": start_dt_str,
+            "end_time_utc": end_dt_str,
+            "selected_tle_files": selected_tle,
+            "selected_gs_items": selected_gs,
+            "min_el": self.min_el_spin.value(),
+            "min_dur": self.min_dur_spin.value(),
+            "start_pass_no": self.start_pass_spin.value(),
+            "use_shift_hours": self.chk_use_shift_hours.isChecked(),
+            "shift_hours_rules": serialized_shift_rules,
+            "use_equalize": self.chk_equalize_sat.isChecked(),
+            "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
+            "min_pass_targets": self.min_pass_targets,
+            "max_pass_targets": self.max_pass_targets,
+            "color_mode": self.color_mode
+        }
+        config_manager.save_config(config_data)
+
+    def restore_settings(self):
+        """config.json에서 이전 설정을 읽어와 UI에 자동 복원"""
+        config_data = config_manager.load_config()
+        tab1_cfg = config_data.get("tab1", {})
+        if not tab1_cfg:
+            return
+
+        self.is_restoring = True
+        self.blockSignals(True)
+        try:
+            # 💡 1. Start / End Time Window 복원
+            if "start_time_utc" in tab1_cfg:
+                s_qdt = QDateTime.fromString(tab1_cfg["start_time_utc"], "yyyy-MM-dd HH:mm:ss")
+                if s_qdt.isValid():
+                    self.start_time_edit.setDateTime(s_qdt)
+
+            if "end_time_utc" in tab1_cfg:
+                e_qdt = QDateTime.fromString(tab1_cfg["end_time_utc"], "yyyy-MM-dd HH:mm:ss")
+                if e_qdt.isValid():
+                    self.end_time_edit.setDateTime(e_qdt)
+
+            # 2. 필터 값 복원
+            if "min_el" in tab1_cfg: self.min_el_spin.setValue(tab1_cfg["min_el"])
+            if "min_dur" in tab1_cfg: self.min_dur_spin.setValue(tab1_cfg["min_dur"])
+            if "start_pass_no" in tab1_cfg: self.start_pass_spin.setValue(tab1_cfg["start_pass_no"])
+            if "use_shift_hours" in tab1_cfg: self.chk_use_shift_hours.setChecked(tab1_cfg["use_shift_hours"])
+            if "use_equalize" in tab1_cfg: self.chk_equalize_sat.setChecked(tab1_cfg["use_equalize"])
+
+            # 3. Shift Hours 규칙 복원
+            raw_rules = tab1_cfg.get("shift_hours_rules", [])
+            restored_rules = []
+            for r in raw_rules:
+                try:
+                    s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
+                    e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
+                    s_time = datetime.strptime(r["start_time"], "%H:%M:%S").time()
+                    e_time = datetime.strptime(r["end_time"], "%H:%M:%S").time()
+                    restored_rules.append({
+                        "phase_name": r.get("phase_name", "Phase"),
+                        "start_date": s_date,
+                        "end_date": e_date,
+                        "start_time": s_time,
+                        "end_time": e_time,
+                        "is_24h": r.get("is_24h", False)
+                    })
+                except Exception:
+                    continue
+            if restored_rules:
+                self.shift_hours_rules = restored_rules
+
+            # 4. Equalize 규칙 복원
+            if tab1_cfg.get("equalize_target_sats") is not None:
+                self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
+            self.min_pass_targets = tab1_cfg.get("min_pass_targets", {})
+            self.max_pass_targets = tab1_cfg.get("max_pass_targets", {})
+
+            # 5. TLE 선택 항목 복원 (저장된 정보가 없으면 전체 선택)
+            saved_tle = set(tab1_cfg.get("selected_tle_files", []))
+            for i in range(self.tle_file_list.count()):
+                item = self.tle_file_list.item(i)
+                if saved_tle:
+                    item.setSelected(item.text() in saved_tle)
+                else:
+                    item.setSelected(True)
+
+            # 6. 지상국 선택 항목 복원 (저장된 정보가 없으면 전체 선택)
+            saved_gs = set(tab1_cfg.get("selected_gs_items", []))
+            for i in range(self.gs_list.count()):
+                item = self.gs_list.item(i)
+                if saved_gs:
+                    item.setSelected(item.text() in saved_gs)
+                else:
+                    item.setSelected(True)
+
+            # 7. Color Mode 복원
+            color_mode = tab1_cfg.get("color_mode", "STATION")
+            if color_mode == "SATELLITE":
+                self.radio_color_sat.setChecked(True)
+            else:
+                self.radio_color_station.setChecked(True)
+        finally:
+            self.blockSignals(False)
+            self.is_restoring = False
+
+    # --------------------------------------------------------------------------
+    # 외부 파일 로더 연결
     # --------------------------------------------------------------------------
     def click_import_external_schedule(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -284,7 +423,7 @@ class PassPredictTab(QWidget):
         selected_engine = engine_map[engine_idx]
 
         try:
-            parsed_passes = self.parse_external_schedule_file(path, engine=selected_engine)
+            parsed_passes = ExternalScheduleLoader.parse_external_schedule_file(path, engine=selected_engine)
             if not parsed_passes:
                 QMessageBox.warning(self, "Warning", "The selected schedule file contains no valid pass data.")
                 return
@@ -300,184 +439,8 @@ class PassPredictTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
-    def parse_external_schedule_file(self, file_path, engine="auto"):
-        ext = os.path.splitext(file_path)[1].lower()
-        passes = []
-
-        if ext in [".yaml", ".yml"]:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = yaml.safe_load(f) or {}
-            raw_list = content if isinstance(content, list) else content.get("predicted_passes", content.get("schedule", content.get("passes", [])))
-            for item in raw_list:
-                if isinstance(item, dict):
-                    passes.append(self.convert_dict_to_pass_item(item))
-            return passes
-
-        if ext in [".xlsx", ".xls"]:
-            raw_dicts = self._read_raw_excel(file_path, engine=engine)
-            for row in raw_dicts:
-                passes.append(self.convert_dict_to_pass_item(row))
-            return passes
-
-        if ext == ".csv":
-            try:
-                with open(file_path, "r", encoding="utf-8-sig") as f:
-                    content = yaml.safe_load(f) or {}
-                if isinstance(content, dict) and "predicted_passes" in content:
-                    raw_list = content.get("predicted_passes", [])
-                    for item in raw_list:
-                        if isinstance(item, dict):
-                            passes.append(self.convert_dict_to_pass_item(item))
-                    return passes
-            except Exception:
-                pass
-
-            raw_dicts = self._read_raw_csv(file_path)
-            for row in raw_dicts:
-                passes.append(self.convert_dict_to_pass_item(row))
-            return passes
-
-        return passes
-
-    def _read_raw_excel(self, file_path, engine="auto"):
-        rows = []
-        if engine == "standard":
-            rows = self._read_excel_openpyxl_raw(file_path)
-        elif engine == "xlwings":
-            rows = self._read_excel_xlwings_raw(file_path)
-        else:
-            try:
-                rows = self._read_excel_openpyxl_raw(file_path)
-            except Exception:
-                rows = self._read_excel_xlwings_raw(file_path)
-
-        if not rows:
-            return []
-
-        headers = [str(cell).strip() if cell is not None else "" for cell in rows[0]]
-        dict_rows = []
-        for row in rows[1:]:
-            if not any(row):
-                continue
-            row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
-            dict_rows.append(row_dict)
-        return dict_rows
-
-    def _read_excel_openpyxl_raw(self, file_path):
-        from openpyxl import load_workbook
-        wb = load_workbook(file_path, data_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-        return rows
-
-    def _read_excel_xlwings_raw(self, file_path):
-        import xlwings as xw
-        app = xw.App(visible=False, add_book=False)
-        app.display_alerts = False
-        try:
-            wb = app.books.open(file_path)
-            sheet = wb.sheets[0]
-            raw_data = sheet.used_range.value
-            wb.close()
-            if raw_data and not isinstance(raw_data[0], list):
-                raw_data = [raw_data]
-            return raw_data or []
-        finally:
-            app.quit()
-
-    def _read_raw_csv(self, file_path):
-        encodings = ['utf-8-sig', 'cp949', 'euc-kr', 'utf-8']
-        for enc in encodings:
-            try:
-                with open(file_path, "r", encoding=enc) as f:
-                    reader = csv.DictReader(f)
-                    return list(reader)
-            except Exception:
-                continue
-        return []
-
-    def convert_dict_to_pass_item(self, d):
-        if not isinstance(d, dict):
-            d = {}
-
-        norm_d = {}
-        for k, v in d.items():
-            if k is not None:
-                norm_k = str(k).lower().replace("_", "").replace(" ", "").replace("(", "").replace(")", "").replace("-", "").replace(".", "")
-                norm_d[norm_k] = v
-
-        def get_val(candidate_keys, default_val=""):
-            for ck in candidate_keys:
-                norm_ck = ck.lower().replace("_", "").replace(" ", "").replace("(", "").replace(")", "").replace("-", "").replace(".", "")
-                if norm_ck in norm_d:
-                    val = norm_d[norm_ck]
-                    if val is not None and str(val).strip() != "":
-                        return val
-            return default_val
-
-        station = get_val(["station", "groundstation", "gs", "main"], "GS")
-        sat = get_val(["satellite", "satid", "sat"], "SAT")
-        pass_no_str = str(get_val(["passno", "passnum", "sequenceid"], 1))
-        aos_str = str(get_val(["aos", "aosutc", "sub"], ""))
-        los_str = str(get_val(["los", "losutc", "remark"], ""))
-        dur_str = str(get_val(["durationsec", "duration", "durations", "mindur"], 0))
-        max_el_str = str(get_val(["maxelevation", "maxel", "maxeldeg", "maxelevationdeg", "minel"], 0))
-        status_str = str(get_val(["status", "reqcap"], "Normal"))
-
-        return self.convert_values_to_pass_item(
-            station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str
-        )
-
-    def convert_values_to_pass_item(self, station, sat, pass_no_str, aos_str, los_str, dur_str, max_el_str, status_str):
-        digits = [s for s in str(pass_no_str) if s.isdigit()]
-        p_no = int("".join(digits)) if digits else 1
-
-        aos_dt = self.parse_dt_string(aos_str)
-        los_dt = self.parse_dt_string(los_str)
-
-        try: float_dur = float(dur_str)
-        except ValueError: float_dur = 0.0
-
-        try: float_el = float(max_el_str)
-        except ValueError: float_el = 0.0
-
-        return {
-            'station': str(station).strip(),
-            'satellite': str(sat).strip(),
-            'pass_no': p_no,
-            'aos': aos_dt,
-            'los': los_dt,
-            'duration': float_dur,
-            'max_el': float_el,
-            'status': str(status_str).replace("⚠️", "").strip(),
-            'selected': True,
-            'conflict_group': None
-        }
-
-    def parse_dt_string(self, dt_str):
-        if isinstance(dt_str, datetime):
-            return dt_str.replace(tzinfo=None)
-            
-        if not dt_str:
-            return datetime.now(timezone.utc).replace(tzinfo=None)
-        
-        dt_str = str(dt_str).strip()
-        formats = [
-            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f",
-            "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ",
-            "%Y/%m/%d %H:%M:%S"
-        ]
-        for fmt in formats:
-            try:
-                dt = datetime.strptime(dt_str, fmt)
-                return dt
-            except ValueError:
-                continue
-        return datetime.now(timezone.utc).replace(tzinfo=None)
-
     # --------------------------------------------------------------------------
-    # 기존 이벤트 및 제어 메서드
+    # 기존 제어 이벤트 핸들러
     # --------------------------------------------------------------------------
     def click_open_shift_dialog(self):
         base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
@@ -485,6 +448,7 @@ class PassPredictTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.shift_hours_rules = dialog.get_results()
             self.chk_use_shift_hours.setChecked(True)
+            self.save_settings()
             
             info_tokens = []
             for r in self.shift_hours_rules:
@@ -523,6 +487,7 @@ class PassPredictTab(QWidget):
         return True
 
     def run_scheduling(self):
+        self.save_settings()
         selected_files = [item.text() for item in self.tle_file_list.selectedItems()]
         tle_data = parse_tle_from_dir(self.tle_dir, selected_files)
         selected_stations = [self.main_app.station_data[self.gs_list.row(item)] for item in self.gs_list.selectedItems()]
@@ -580,6 +545,7 @@ class PassPredictTab(QWidget):
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets = dialog.get_results()
+            self.save_settings()
             
             target_info_tokens = []
             for sat in sorted(self.equalize_target_sats):
@@ -597,6 +563,7 @@ class PassPredictTab(QWidget):
         else:
             self.color_mode = "STATION"
             
+        self.save_settings()
         if getattr(self.main_app, 'calculated_passes', None):
             self.populate_table()
 
@@ -612,14 +579,26 @@ class PassPredictTab(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
     def refresh_tle_files(self):
-        self.tle_file_list.clear()
-        parse_tle_from_dir(self.tle_dir)
-        if os.path.exists(self.tle_dir):
-            for filename in os.listdir(self.tle_dir):
-                if filename.endswith(".tle") or filename.endswith(".txt"):
-                    self.tle_file_list.addItem(filename)
-        for i in range(self.tle_file_list.count()):
-            self.tle_file_list.item(i).setSelected(True)
+        self.tle_file_list.blockSignals(True)
+        try:
+            self.tle_file_list.clear()
+            parse_tle_from_dir(self.tle_dir)
+            if os.path.exists(self.tle_dir):
+                for filename in os.listdir(self.tle_dir):
+                    if filename.endswith(".tle") or filename.endswith(".txt"):
+                        self.tle_file_list.addItem(filename)
+        finally:
+            self.tle_file_list.blockSignals(False)
+
+    def refresh_stations(self):
+        self.gs_list.blockSignals(True)
+        try:
+            self.gs_list.clear()
+            self.main_app.station_data = parse_stations_from_dir(self.stations_dir)
+            for cfg in self.main_app.station_data:
+                self.gs_list.addItem(f"{cfg[0]} (Lat: {cfg[1]}, Lon: {cfg[2]}) [Down:{cfg[3]} / Cmd:{cfg[4]}]")
+        finally:
+            self.gs_list.blockSignals(False)
 
     def click_fetch_online_tle(self):
         query, ok = QInputDialog.getText(
@@ -691,15 +670,7 @@ class PassPredictTab(QWidget):
                 QMessageBox.information(self, "Download Complete", msg)
                 self.refresh_tle_files()
             else:
-                QMessageBox.critical(self, "Download Error", f"Failed to download selected satellites.")
-
-    def refresh_stations(self):
-        self.gs_list.clear()
-        self.main_app.station_data = parse_stations_from_dir(self.stations_dir)
-        for cfg in self.main_app.station_data:
-            self.gs_list.addItem(f"{cfg[0]} (Lat: {cfg[1]}, Lon: {cfg[2]}) [Down:{cfg[3]} / Cmd:{cfg[4]}]")
-        for i in range(self.gs_list.count()):
-            self.gs_list.item(i).setSelected(True)
+                QMessageBox.critical(self, "Download Error", f"Failed to download selected satellites.")    
 
     def update_summary_dashboard(self):
         if not self.main_app.calculated_passes:
