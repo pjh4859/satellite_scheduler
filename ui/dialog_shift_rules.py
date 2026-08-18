@@ -10,7 +10,9 @@ class ShiftRuleDialog(QDialog):
     def __init__(self, current_rules=None, base_start_dt=None, all_stations=None, exempt_stations=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙️ Ground Station Shift Hours & 24/7 Exemption Rules (UTC)")
-        self.resize(1020, 560)
+        # 💡 전체 창 너비를 1240px로 여유 있게 확장
+        self.resize(1240, 580)
+        self.setMinimumWidth(1180)
         
         self.all_stations = all_stations or []
         self.exempt_stations = set(exempt_stations or [])
@@ -40,7 +42,6 @@ class ShiftRuleDialog(QDialog):
         else:
             self.rules = []
             for r in current_rules:
-                # 구형 데이터 호환성 보정
                 s_date = r.get("start_date") or (r["start_dt"].date() if "start_dt" in r else today_utc)
                 e_date = r.get("end_date") or (r["end_dt"].date() if "end_dt" in r else today_utc + timedelta(days=30))
                 s_time = r.get("start_time") or (r["start_dt"].time() if "start_dt" in r else time(9, 0))
@@ -63,7 +64,7 @@ class ShiftRuleDialog(QDialog):
         
         layout.addWidget(QLabel(
             "<b>1. Define Shift Periods, Daily Working Hours & Active Days (All times in UTC):</b><br>"
-            "<font color='#555555'>• You can specify date ranges (Date ~ Date) with daily recurring shift times.<br>"
+            "<font color='#555555'>• Specify date ranges (Date ~ Date) with daily recurring shift times.<br>"
             "• Overnight shifts (e.g. 23:00 ~ 07:00 UTC) automatically handle next-day transitions.</font>"
         ))
 
@@ -72,6 +73,7 @@ class ShiftRuleDialog(QDialog):
         self.table.setHorizontalHeaderLabels([
             "Phase / Shift Name", "Date Range (UTC)", "Daily Shift Hours (UTC)", "Active Days (Mon~Sun)", "24H Full", "Night Shift"
         ])
+        
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
@@ -79,9 +81,10 @@ class ShiftRuleDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         
-        self.table.horizontalHeader().resizeSection(0, 140)
-        self.table.horizontalHeader().resizeSection(1, 220)
-        self.table.horizontalHeader().resizeSection(2, 170)
+        # 💡 컬럼 너비 재조정 (Daily Shift Hours: 240px)
+        self.table.horizontalHeader().resizeSection(0, 150)  # Phase Name
+        self.table.horizontalHeader().resizeSection(1, 270)  # Date Range
+        self.table.horizontalHeader().resizeSection(2, 240)  # Daily Shift Hours
             
         layout.addWidget(self.table)
         self.populate_rule_table()
@@ -137,39 +140,47 @@ class ShiftRuleDialog(QDialog):
             # 1. Date Range (Date ~ Date)
             date_widget = QWidget()
             date_lay = QHBoxLayout(date_widget)
-            date_lay.setContentsMargins(2, 2, 2, 2)
-            date_lay.setSpacing(4)
+            date_lay.setContentsMargins(4, 2, 4, 2)
+            date_lay.setSpacing(6)
             
             dt_start = QDateEdit(rule.get("start_date"))
             dt_start.setDisplayFormat("yyyy-MM-dd")
             dt_start.setCalendarPopup(True)
+            dt_start.setMinimumWidth(110)
             date_lay.addWidget(dt_start)
             
-            date_lay.addWidget(QLabel("~"))
+            lbl_tilde1 = QLabel("~")
+            lbl_tilde1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            date_lay.addWidget(lbl_tilde1)
             
             dt_end = QDateEdit(rule.get("end_date"))
             dt_end.setDisplayFormat("yyyy-MM-dd")
             dt_end.setCalendarPopup(True)
+            dt_end.setMinimumWidth(110)
             date_lay.addWidget(dt_end)
             
             date_widget.dt_start = dt_start
             date_widget.dt_end = dt_end
             self.table.setCellWidget(r_idx, 1, date_widget)
 
-            # 2. Daily Shift Hours (Time ~ Time)
+            # 2. Daily Shift Hours (Time ~ Time) - 💡 가로 폭 95px로 넉넉하게 확장
             time_widget = QWidget()
             time_lay = QHBoxLayout(time_widget)
-            time_lay.setContentsMargins(2, 2, 2, 2)
-            time_lay.setSpacing(4)
+            time_lay.setContentsMargins(6, 2, 6, 2)
+            time_lay.setSpacing(8)
             
             tm_start = QTimeEdit(rule.get("start_time"))
             tm_start.setDisplayFormat("HH:mm")
+            tm_start.setMinimumWidth(95)
             time_lay.addWidget(tm_start)
             
-            time_lay.addWidget(QLabel("~"))
+            lbl_tilde2 = QLabel("~")
+            lbl_tilde2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            time_lay.addWidget(lbl_tilde2)
             
             tm_end = QTimeEdit(rule.get("end_time"))
             tm_end.setDisplayFormat("HH:mm")
+            tm_end.setMinimumWidth(95)
             time_lay.addWidget(tm_end)
             
             time_widget.tm_start = tm_start
@@ -210,7 +221,7 @@ class ShiftRuleDialog(QDialog):
             lbl_night.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setCellWidget(r_idx, 5, lbl_night)
 
-            # 이벤트 바인딩
+            # 상태 업데이트 이벤트
             def update_row_state(row=r_idx):
                 is_24 = self.table.cellWidget(row, 4).findChild(QCheckBox).isChecked()
                 t_w = self.table.cellWidget(row, 2)
