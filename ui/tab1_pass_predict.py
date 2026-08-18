@@ -40,6 +40,7 @@ class PassPredictTab(QWidget):
         self.min_pass_targets = {}
         self.max_pass_targets = {}
         self.shift_hours_rules = []
+        self.shift_exempt_stations = []
         
         self.auto_resolve_weights = None
         self.auto_resolve_priorities = None
@@ -410,10 +411,6 @@ class PassPredictTab(QWidget):
                 "background-color: #E0E0E0; padding: 6px 12px; border-radius: 4px;"
             )
 
-    
-
-    
-
     def click_auto_resolve(self):
         if not getattr(self.main_app, 'calculated_passes', None):
             QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
@@ -494,19 +491,23 @@ class PassPredictTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
-    
+    def is_pass_in_shift_hours(self, aos_dt, los_dt, station_name=None):
+        """지상국 24/7 예외 검사 및 시프트 구간/요일 마스크 필터링"""
+        if not self.chk_use_shift_hours.isChecked():
+            return True
 
-    def is_pass_in_shift_hours(self, aos_dt, los_dt):
-        """패스의 AOS~LOS 구간 및 요일이 지정된 Shift Rule 중 하나에 만족하는지 검사"""
-        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
+        # 지상국이 24/7 예외 목록에 포함된 경우 모든 시프트/주말 제약을 무조건 우회(Bypass)
+        if station_name and station_name in getattr(self, 'shift_exempt_stations', []):
+            return True
+
+        if not self.shift_hours_rules:
             return True
 
         aos_naive = aos_dt.replace(tzinfo=None) if aos_dt.tzinfo else aos_dt
         los_naive = los_dt.replace(tzinfo=None) if los_dt.tzinfo else los_dt
-        pass_weekday = aos_naive.weekday()  # 0=Mon, 6=Sun
+        pass_weekday = aos_naive.weekday()
 
         for rule in self.shift_hours_rules:
-            # 1. 요일(Day of Week) 마스크 검사
             active_days = rule.get("days", [0, 1, 2, 3, 4, 5, 6])
             if pass_weekday not in active_days:
                 continue
@@ -514,12 +515,10 @@ class PassPredictTab(QWidget):
             s_dt = rule["start_dt"]
             e_dt = rule["end_dt"]
 
-            # 24H Full 옵션 처리
             if rule.get("is_24h", False):
                 s_dt = datetime.combine(s_dt.date(), time.min)
                 e_dt = datetime.combine(e_dt.date(), time.max)
 
-            # 2. DateTime 구간 포함 여부 검사
             if s_dt <= aos_naive and los_naive <= e_dt:
                 return True
 
@@ -527,9 +526,17 @@ class PassPredictTab(QWidget):
 
     def click_open_shift_dialog(self):
         base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
-        dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
+        all_st_names = [st[0] for st in getattr(self.main_app, 'station_data', [])]
+
+        dialog = ShiftRuleDialog(
+            current_rules=self.shift_hours_rules,
+            base_start_dt=base_start_dt,
+            all_stations=all_st_names,
+            exempt_stations=getattr(self, 'shift_exempt_stations', []),
+            parent=self
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.shift_hours_rules = dialog.get_results()
+            self.shift_hours_rules, self.shift_exempt_stations = dialog.get_results()
             self.chk_use_shift_hours.setChecked(True)
             self.save_settings()
             
@@ -545,8 +552,9 @@ class PassPredictTab(QWidget):
                     info_tokens.append(f"• {r['phase_name']}: {r['start_dt'].strftime('%Y-%m-%d')} ~ {r['end_dt'].strftime('%Y-%m-%d')} ({d_str}, 24H)")
                 else:
                     info_tokens.append(f"• {r['phase_name']}: {s_str} ~ {e_str} UTC ({d_str})")
-            
-            msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
+
+            exempt_msg = f"\n\n🌐 24/7 Always Active Stations:\n• {', '.join(self.shift_exempt_stations)}" if self.shift_exempt_stations else "\n\n🌐 24/7 Always Active Stations: None"
+            msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens) + exempt_msg
             QMessageBox.information(self, "Shift Rules Updated", msg)
 
     def save_settings(self):
@@ -580,6 +588,7 @@ class PassPredictTab(QWidget):
             "start_pass_no": self.start_pass_spin.value(),
             "use_shift_hours": self.chk_use_shift_hours.isChecked(),
             "shift_hours_rules": serialized_shift_rules,
+            "shift_exempt_stations": list(getattr(self, 'shift_exempt_stations', [])),
             "use_equalize": self.chk_equalize_sat.isChecked(),
             "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
             "min_pass_targets": self.min_pass_targets,
@@ -633,6 +642,8 @@ class PassPredictTab(QWidget):
                     continue
             if restored_rules:
                 self.shift_hours_rules = restored_rules
+
+            self.shift_exempt_stations = tab1_cfg.get("shift_exempt_stations", [])
 
             if tab1_cfg.get("equalize_target_sats") is not None:
                 self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
@@ -704,7 +715,7 @@ class PassPredictTab(QWidget):
 
         if self.chk_use_shift_hours.isChecked():
             filtered_passes = [
-                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'])
+                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'], p.get('station'))
             ]
             self.main_app.calculated_passes = filtered_passes
         else:
