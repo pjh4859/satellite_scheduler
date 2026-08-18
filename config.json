@@ -1,16 +1,14 @@
 {
     "tab1": {
         "start_time_utc": "2026-10-13 13:53:43",
-        "end_time_utc": "2026-10-14 13:53:43",
+        "end_time_utc": "2026-10-15 13:53:43",
         "selected_tle_files": [
-            "NEONSAT-1.tle",
-            "NEONSAT-1A.tle",
             "NEONSAT-2.tle",
-            "NEONSAT-3.tle",
-            "SPACEEYE-T1.tle"
+            "NEONSAT-4.tle"
         ],
         "selected_gs_items": [
             "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y]",
+            "Jeju (Lat: 33.5, Lon: 126.52) [Down:Y / Cmd:Y]",
             "Svalbard (Lat: 78.23, Lon: 15.49) [Down:N / Cmd:Y]",
             "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y]"
         ],
@@ -20,10 +18,45 @@
         "use_shift_hours": true,
         "shift_hours_rules": [],
         "use_equalize": true,
-        "equalize_target_sats": null,
-        "min_pass_targets": {},
-        "max_pass_targets": {},
-        "color_mode": "STATION",
-        "display_tz": "UTC"
+        "equalize_target_sats": [
+            "NEONSAT-1",
+            "SPACEEYE-T1",
+            "NEONSAT-3",
+            "NEONSAT-2",
+            "NEONSAT-1A"
+        ],
+        "min_pass_targets": {
+            "NEONSAT-1": 1,
+            "NEONSAT-1A": 1,
+            "NEONSAT-2": 1,
+            "NEONSAT-3": 1,
+            "SPACEEYE-T1": 1
+        },
+        "max_pass_targets": {
+            "NEONSAT-1": 0,
+            "NEONSAT-1A": 0,
+            "NEONSAT-2": 0,
+            "NEONSAT-3": 20,
+            "SPACEEYE-T1": 0
+        },
+        "color_mode": "SATELLITE",
+        "display_tz": "UTC",
+        "auto_resolve_weights": {
+            "use_fairness": true,
+            "weight_fairness": 74,
+            "use_elevation": false,
+            "weight_elevation": 25,
+            "use_duration": false,
+            "weight_duration": 20,
+            "use_priority": false,
+            "weight_priority": 50
+        },
+        "auto_resolve_priorities": {
+            "NEONSAT-1": 1,
+            "NEONSAT-1A": 2,
+            "NEONSAT-2": 3,
+            "NEONSAT-3": 4,
+            "SPACEEYE-T1": 5
+        }
     }
 }

@@ -1,92 +1,257 @@
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QRadioButton, QGroupBox, QPushButton, QTableWidget, 
-                             QTableWidgetItem, QSpinBox, QHeaderView)
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
+                             QLabel, QGroupBox, QTableWidget, QTableWidgetItem, 
+                             QHeaderView, QCheckBox, QSlider, QMessageBox, QFrame)
 from PyQt6.QtCore import Qt
-
+from ui.dialog_equalize_rules import EqualizeRuleDialog
 
 class ConflictSolverDialog(QDialog):
-    def __init__(self, all_satellites, parent=None):
+    def __init__(self, all_satellites, equalize_target_sats=None, min_pass_targets=None, 
+                 max_pass_targets=None, saved_weights=None, saved_priorities=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("⚡ Auto Conflict Resolution Rules")
-        self.resize(520, 450)
+        self.setWindowTitle("⚡ Multi-Weighted Auto Conflict Resolution")
+        self.resize(580, 700)
+        
         self.all_satellites = sorted(list(all_satellites))
+        self.equalize_target_sats = equalize_target_sats
+        self.min_pass_targets = min_pass_targets or {}
+        self.max_pass_targets = max_pass_targets or {}
+        self.saved_weights = saved_weights or {}
+        self.saved_priorities = saved_priorities or {}
+        
         self.init_ui()
+        self.restore_saved_inputs()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("<b>Select criteria and configure their relative weights (%):</b>"))
 
-        # 1. 규칙 선택 라디오 버튼
-        group_rule = QGroupBox("🎯 Conflict Resolution Strategy")
-        rule_layout = QVBoxLayout(group_rule)
+        # 1. Fairness 가중치 섹션
+        self.box_fairness = QGroupBox()
+        box_fair_lay = QVBoxLayout(self.box_fairness)
+        
+        h1 = QHBoxLayout()
+        self.chk_fairness = QCheckBox("Cluster Fairness (Equal Allocation)")
+        self.chk_fairness.setChecked(True)
+        self.chk_fairness.setStyleSheet("font-weight: bold; color: #2E7D32;")
+        self.chk_fairness.toggled.connect(self.update_ui_state)
+        h1.addWidget(self.chk_fairness)
+        
+        self.lbl_fair_val = QLabel("Weight: 50%")
+        self.lbl_fair_val.setFixedWidth(80)
+        h1.addWidget(self.lbl_fair_val)
+        
+        self.slider_fairness = QSlider(Qt.Orientation.Horizontal)
+        self.slider_fairness.setRange(1, 100)
+        self.slider_fairness.setValue(50)
+        self.slider_fairness.valueChanged.connect(lambda v: self.lbl_fair_val.setText(f"Weight: {v}%"))
+        h1.addWidget(self.slider_fairness)
+        box_fair_lay.addLayout(h1)
+        
+        self.btn_edit_fairness = QPushButton("⚙️ Set Min / Max Targets & Equalize Rules")
+        self.btn_edit_fairness.setStyleSheet("background-color: #388E3C; color: white; font-size: 11px;")
+        self.btn_edit_fairness.clicked.connect(self.open_equalize_dialog)
+        box_fair_lay.addWidget(self.btn_edit_fairness)
+        layout.addWidget(self.box_fairness)
 
-        self.radio_fair = QRadioButton("⚖️ Cluster Launch Fair Distribution (Equalize Preserving)")
-        self.radio_fair.setChecked(True)
-        self.radio_fair.setToolTip("동시 발사 위성군 추천: 누적 선택 패스가 적은 위성에게 우선권을 부여하여 특정 위성의 고도각 독점을 방지합니다.")
-        rule_layout.addWidget(self.radio_fair)
+        # 2. Max Elevation 가중치 섹션
+        self.box_elevation = QGroupBox()
+        box_el_lay = QHBoxLayout(self.box_elevation)
+        
+        self.chk_elevation = QCheckBox("Max Elevation Angle (Geometry / SNR)")
+        self.chk_elevation.setChecked(True)
+        self.chk_elevation.setStyleSheet("font-weight: bold; color: #0288D1;")
+        self.chk_elevation.toggled.connect(self.update_ui_state)
+        box_el_lay.addWidget(self.chk_elevation)
+        
+        self.lbl_el_val = QLabel("Weight: 25%")
+        self.lbl_el_val.setFixedWidth(80)
+        box_el_lay.addWidget(self.lbl_el_val)
+        
+        self.slider_elevation = QSlider(Qt.Orientation.Horizontal)
+        self.slider_elevation.setRange(1, 100)
+        self.slider_elevation.setValue(25)
+        self.slider_elevation.valueChanged.connect(lambda v: self.lbl_el_val.setText(f"Weight: {v}%"))
+        box_el_lay.addWidget(self.slider_elevation)
+        layout.addWidget(self.box_elevation)
 
-        self.radio_max_el = QRadioButton("📐 Max Elevation Priority (Best SNR)")
-        self.radio_max_el.setToolTip("충돌 패스 중 최대 고도각이 가장 높은 위성을 선택합니다.")
-        rule_layout.addWidget(self.radio_max_el)
+        # 3. Duration 가중치 섹션
+        self.box_duration = QGroupBox()
+        box_dur_lay = QHBoxLayout(self.box_duration)
+        
+        self.chk_duration = QCheckBox("Longest Contact Duration (Time Window)")
+        self.chk_duration.setChecked(False)
+        self.chk_duration.setStyleSheet("font-weight: bold; color: #7B1FA2;")
+        self.chk_duration.toggled.connect(self.update_ui_state)
+        box_dur_lay.addWidget(self.chk_duration)
+        
+        self.lbl_dur_val = QLabel("Weight: 20%")
+        self.lbl_dur_val.setFixedWidth(80)
+        box_dur_lay.addWidget(self.lbl_dur_val)
+        
+        self.slider_duration = QSlider(Qt.Orientation.Horizontal)
+        self.slider_duration.setRange(1, 100)
+        self.slider_duration.setValue(20)
+        self.slider_duration.valueChanged.connect(lambda v: self.lbl_dur_val.setText(f"Weight: {v}%"))
+        box_dur_lay.addWidget(self.slider_duration)
+        layout.addWidget(self.box_duration)
 
-        self.radio_dur = QRadioButton("⏱️ Longest Pass Duration Priority")
-        self.radio_dur.setToolTip("충돌 패스 중 교신 가능 시간이 가장 긴 위성을 선택합니다.")
-        rule_layout.addWidget(self.radio_dur)
+        # 4. Satellite Priority 가중치 섹션
+        self.box_priority = QGroupBox()
+        box_prio_lay = QVBoxLayout(self.box_priority)
+        
+        h4 = QHBoxLayout()
+        self.chk_priority = QCheckBox("Satellite Fixed Priority (Rank Based)")
+        self.chk_priority.setChecked(False)
+        self.chk_priority.setStyleSheet("font-weight: bold; color: #E65100;")
+        self.chk_priority.toggled.connect(self.update_ui_state)
+        h4.addWidget(self.chk_priority)
+        
+        self.lbl_prio_val = QLabel("Weight: 50%")
+        self.lbl_prio_val.setFixedWidth(80)
+        h4.addWidget(self.lbl_prio_val)
+        
+        self.slider_priority = QSlider(Qt.Orientation.Horizontal)
+        self.slider_priority.setRange(1, 100)
+        self.slider_priority.setValue(50)
+        self.slider_priority.valueChanged.connect(lambda v: self.lbl_prio_val.setText(f"Weight: {v}%"))
+        h4.addWidget(self.slider_priority)
+        box_prio_lay.addLayout(h4)
 
-        self.radio_prio = QRadioButton("⭐ Fixed Satellite Rank / Priority")
-        self.radio_prio.toggled.connect(self.on_prio_toggled)
-        rule_layout.addWidget(self.radio_prio)
-
-        layout.addWidget(group_rule)
-
-        # 2. 위성별 우선순위 지정 테이블 (SAT_PRIORITY 선택 시 활성화)
-        self.table_prio = QTableWidget()
-        self.table_prio.setColumnCount(2)
-        self.table_prio.setHorizontalHeaderLabels(["Satellite", "Priority Rank (1 = Highest)"])
-        self.table_prio.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_prio.setEnabled(False)
-
-        self.table_prio.setRowCount(len(self.all_satellites))
-        for idx, sat in enumerate(self.all_satellites):
-            self.table_prio.setItem(idx, 0, QTableWidgetItem(sat))
+        self.priority_table = QTableWidget()
+        self.priority_table.setColumnCount(2)
+        self.priority_table.setHorizontalHeaderLabels(["Satellite Name", "Priority Rank (1 = Top)"])
+        self.priority_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.priority_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.priority_table.setRowCount(len(self.all_satellites))
+        
+        for row, sat in enumerate(self.all_satellites):
+            item_sat = QTableWidgetItem(sat)
+            item_sat.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item_rank = QTableWidgetItem(str(row + 1))
+            item_rank.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.priority_table.setItem(row, 0, item_sat)
+            self.priority_table.setItem(row, 1, item_rank)
             
-            spin = QSpinBox()
-            spin.setRange(1, 99)
-            spin.setValue(idx + 1)
-            self.table_prio.setCellWidget(idx, 1, spin)
+        box_prio_lay.addWidget(self.priority_table)
+        layout.addWidget(self.box_priority)
 
-        layout.addWidget(QLabel("<b>Satellite Priority Ranks (if Rank Mode selected):</b>"))
-        layout.addWidget(self.table_prio)
+        # 안내 가이드
+        self.frame_guide = QFrame()
+        self.frame_guide.setStyleSheet(
+            "background-color: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 6px; padding: 8px;"
+        )
+        guide_lay = QVBoxLayout(self.frame_guide)
+        guide_lay.setContentsMargins(6, 6, 6, 6)
+        guide_lay.setSpacing(4)
+        
+        lbl_guide_title = QLabel("<b>📐 Score Evaluation & Decision Rule</b>")
+        lbl_guide_title.setStyleSheet("color: #212121; font-size: 11px;")
+        guide_lay.addWidget(lbl_guide_title)
+        
+        formula_html = (
+            "<div style='font-size: 11px; color: #424242; line-height: 140%;'>"
+            "• <b>Total Score</b> = &Sigma; (<b>Weight</b> &times; <b>Normalized Score</b>) + <b>Hard Constraints</b><br>"
+            "&nbsp;&nbsp;- <b>Fairness</b>: (-Pass Count &times; 15) + Target Bonus (+20) + Min Target Bonus (+50)<br>"
+            "&nbsp;&nbsp;- <b>Elevation / Duration</b>: (Pass Value / Group Max) &times; 100% (Normalized 0~100)<br>"
+            "&nbsp;&nbsp;- <b>Priority</b>: Max 100 - (Rank - 1) &times; 20 (Rank 1 = 100 pts)<br>"
+            "&nbsp;&nbsp;- <b>Hard Penalty (-10,000)</b>: Applied if satellite exceeds its <code>Max Pass Limit</code>.<br>"
+            "<i>* The pass with highest Total Score in each conflict group is automatically selected.</i>"
+            "</div>"
+        )
+        lbl_guide_desc = QLabel(formula_html)
+        lbl_guide_desc.setWordWrap(True)
+        guide_lay.addWidget(lbl_guide_desc)
+        layout.addWidget(self.frame_guide)
 
-        # 3. 하단 버튼
+        # 하단 버튼
         btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("⚡ Apply Auto Resolution")
-        btn_apply.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold; padding: 6px;")
-        btn_apply.clicked.connect(self.accept)
-        btn_layout.addWidget(btn_apply)
-
-        btn_cancel = QPushButton("Cancel")
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_cancel)
-
+        btn_layout.addStretch()
+        
+        self.btn_ok = QPushButton("Apply Weighted Strategy")
+        self.btn_ok.setStyleSheet("background-color: #1976D2; color: white; font-weight: bold; padding: 6px 16px;")
+        self.btn_ok.clicked.connect(self.on_apply)
+        btn_layout.addWidget(self.btn_ok)
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
         layout.addLayout(btn_layout)
 
-    def on_prio_toggled(self, checked):
-        self.table_prio.setEnabled(checked)
+    def restore_saved_inputs(self):
+        """저장된 가중치와 우선순위 복원"""
+        if self.saved_weights:
+            self.chk_fairness.setChecked(self.saved_weights.get('use_fairness', True))
+            w_fair = self.saved_weights.get('weight_fairness', 50)
+            self.slider_fairness.setValue(w_fair)
+            self.lbl_fair_val.setText(f"Weight: {w_fair}%")
+
+            self.chk_elevation.setChecked(self.saved_weights.get('use_elevation', True))
+            w_el = self.saved_weights.get('weight_elevation', 25)
+            self.slider_elevation.setValue(w_el)
+            self.lbl_el_val.setText(f"Weight: {w_el}%")
+
+            self.chk_duration.setChecked(self.saved_weights.get('use_duration', False))
+            w_dur = self.saved_weights.get('weight_duration', 20)
+            self.slider_duration.setValue(w_dur)
+            self.lbl_dur_val.setText(f"Weight: {w_dur}%")
+
+            self.chk_priority.setChecked(self.saved_weights.get('use_priority', False))
+            w_prio = self.saved_weights.get('weight_priority', 50)
+            self.slider_priority.setValue(w_prio)
+            self.lbl_prio_val.setText(f"Weight: {w_prio}%")
+
+        if self.saved_priorities:
+            for row in range(self.priority_table.rowCount()):
+                sat_name = self.priority_table.item(row, 0).text()
+                if sat_name in self.saved_priorities:
+                    self.priority_table.item(row, 1).setText(str(self.saved_priorities[sat_name]))
+
+        self.update_ui_state()
+
+    def update_ui_state(self):
+        self.slider_fairness.setEnabled(self.chk_fairness.isChecked())
+        self.btn_edit_fairness.setEnabled(self.chk_fairness.isChecked())
+        self.slider_elevation.setEnabled(self.chk_elevation.isChecked())
+        self.slider_duration.setEnabled(self.chk_duration.isChecked())
+        self.slider_priority.setEnabled(self.chk_priority.isChecked())
+        self.priority_table.setEnabled(self.chk_priority.isChecked())
+
+    def open_equalize_dialog(self):
+        dialog = EqualizeRuleDialog(
+            all_satellites=self.all_satellites,
+            current_targets=self.equalize_target_sats,
+            current_min_targets=self.min_pass_targets,
+            current_max_targets=self.max_pass_targets,
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets = dialog.get_results()
+
+    def on_apply(self):
+        if not any([self.chk_fairness.isChecked(), self.chk_elevation.isChecked(), 
+                    self.chk_duration.isChecked(), self.chk_priority.isChecked()]):
+            QMessageBox.warning(self, "Warning", "Please select at least one criteria.")
+            return
+        self.accept()
 
     def get_results(self):
-        if self.radio_fair.isChecked():
-            rule = "FAIR_EQUAL"
-        elif self.radio_max_el.isChecked():
-            rule = "MAX_EL"
-        elif self.radio_dur.isChecked():
-            rule = "DURATION"
-        else:
-            rule = "SAT_PRIORITY"
-
+        weights = {
+            'use_fairness': self.chk_fairness.isChecked(),
+            'weight_fairness': self.slider_fairness.value(),
+            'use_elevation': self.chk_elevation.isChecked(),
+            'weight_elevation': self.slider_elevation.value(),
+            'use_duration': self.chk_duration.isChecked(),
+            'weight_duration': self.slider_duration.value(),
+            'use_priority': self.chk_priority.isChecked(),
+            'weight_priority': self.slider_priority.value(),
+        }
         sat_priorities = {}
-        for row in range(self.table_prio.rowCount()):
-            sat = self.table_prio.item(row, 0).text()
-            spin = self.table_prio.cellWidget(row, 1)
-            sat_priorities[sat] = spin.value()
-
-        return rule, sat_priorities
+        for row in range(self.priority_table.rowCount()):
+            sat_name = self.priority_table.item(row, 0).text()
+            try:
+                rank = int(self.priority_table.item(row, 1).text())
+            except ValueError:
+                rank = 999
+            sat_priorities[sat_name] = rank
+            
+        return weights, sat_priorities, self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets

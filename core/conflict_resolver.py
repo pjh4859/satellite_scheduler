@@ -1,97 +1,118 @@
-def resolve_conflicts(passes, rule="EQUAL_PRIORITY", sat_priorities=None):
+def resolve_conflicts(passes, weights=None, sat_priorities=None, 
+                      equalize_target_sats=None, min_pass_targets=None, max_pass_targets=None):
     """
-    passes: main_app.calculated_passes (list of dict)
-    rule: 
-      - "FAIR_EQUAL": Equalize 미달 및 누적 패스 수 적은 위성 우선 (동시발사 강력 추천!)
-      - "MAX_EL": 최대 고도각(Max Elevation) 우선
-      - "DURATION": 교신 시간(Duration) 우선
-      - "SAT_PRIORITY": 위성 우선순위 지정 방식 우선
-    sat_priorities: dict {"SAT_A": 1, "SAT_B": 2, ...} (숫자가 작을수록 높은 우선순위)
+    Weighted Multi-Criteria Conflict Resolution Engine
+    - weights: dict {
+        'use_fairness': bool, 'weight_fairness': int,
+        'use_elevation': bool, 'weight_elevation': int,
+        'use_duration': bool, 'weight_duration': int,
+        'use_priority': bool, 'weight_priority': int
+      }
     """
     if not passes:
         return passes
 
-    if sat_priorities is None:
-        sat_priorities = {}
+    weights = weights or {
+        'use_fairness': True, 'weight_fairness': 50,
+        'use_elevation': True, 'weight_elevation': 25,
+        'use_duration': False, 'weight_duration': 0,
+        'use_priority': False, 'weight_priority': 0
+    }
+    sat_priorities = sat_priorities or {}
+    min_pass_targets = min_pass_targets or {}
+    max_pass_targets = max_pass_targets or {}
 
-    # 1. conflict_group별로 패스들을 묶음
+    sat_selected_counts = {}
+    for p in passes:
+        sat_clean = p['satellite'].split('(')[0].strip()
+        if sat_clean not in sat_selected_counts:
+            sat_selected_counts[sat_clean] = 0
+
     groups = {}
+    non_conflict_indices = []
+
     for idx, p in enumerate(passes):
-        grp_id = p.get('conflict_group', None)
-        st_name = p.get('station', '')
-        
+        grp_id = p.get('conflict_group')
+        st_name = p.get('station', 'UNKNOWN')
         if grp_id is not None:
             key = (st_name, grp_id)
             if key not in groups:
                 groups[key] = []
             groups[key].append((idx, p))
         else:
-            # 충돌 없는 패스는 기본 선택 상태 유지
-            passes[idx]['selected'] = True
+            non_conflict_indices.append(idx)
 
-    # 위성별 실시간 선택 누적 카운트 추적용
-    sat_selected_counts = {}
+    # 비충돌 패스 기본 선택 처리
+    for idx in non_conflict_indices:
+        passes[idx]['selected'] = True
+        sat_clean = passes[idx]['satellite'].split('(')[0].strip()
+        sat_selected_counts[sat_clean] += 1
 
-    # 시간순으로 충돌 그룹 정렬
-    sorted_group_keys = sorted(groups.keys(), key=lambda k: groups[k][0][1]['aos'])
+    sorted_group_keys = sorted(
+        groups.keys(), 
+        key=lambda k: min(item[1]['aos'] for item in groups[k])
+    )
 
     for key in sorted_group_keys:
-        group_passes = groups[key] # [(orig_idx, pass_dict), ...]
-        
-        # 기본적으로 그룹 내 모든 패스를 Unselect 처리
-        for orig_idx, p in group_passes:
-            passes[orig_idx]['selected'] = False
+        group_items = groups[key]
+        best_idx = None
+        best_score = -float('inf')
 
-        winner_idx = None
+        # 그룹 내 최대 고도각 및 최대 패스 시간 계산 (정규화용)
+        max_el_in_grp = max([float(item[1].get('max_el', 1)) for item in group_items] or [1.0])
+        max_dur_in_grp = max([float(item[1].get('duration', 1)) for item in group_items] or [1.0])
 
-        # ----------------------------------------------------------------------
-        # 🎯 규칙 1: FAIR_EQUAL (동시 발사 맞춤형: 누적 균등 최우선)
-        # ----------------------------------------------------------------------
-        if rule == "FAIR_EQUAL":
-            def fair_sort_key(item):
-                orig_idx, p = item
-                sat_clean = p['satellite'].split('(')[0].strip()
-                sel_count = sat_selected_counts.get(sat_clean, 0)
-                max_el = float(p.get('max_el', 0))
-                dur = float(p.get('duration', 0))
-                # 누적 선택 횟수가 적은 위성 우선 (-sel_count), 그 다음 Max El, Duration
-                return (sel_count, -max_el, -dur)
+        for idx, p in group_items:
+            sat_clean = p['satellite'].split('(')[0].strip()
+            curr_count = sat_selected_counts.get(sat_clean, 0)
+            max_limit = max_pass_targets.get(sat_clean, 0)
+            min_target = min_pass_targets.get(sat_clean, 1)
 
-            sorted_candidates = sorted(group_passes, key=fair_sort_key)
-            winner_idx = sorted_candidates[0][0]
+            # Max Target 상한 초과 페널티
+            is_over_max = (max_limit > 0 and curr_count >= max_limit)
+            hard_penalty = -10000.0 if is_over_max else 0.0
 
-        # ----------------------------------------------------------------------
-        # 🎯 규칙 2: MAX_EL (최대 고도각 우선)
-        # ----------------------------------------------------------------------
-        elif rule == "MAX_EL":
-            sorted_candidates = sorted(group_passes, key=lambda x: float(x[1].get('max_el', 0)), reverse=True)
-            winner_idx = sorted_candidates[0][0]
+            total_score = hard_penalty
 
-        # ----------------------------------------------------------------------
-        # 🎯 규칙 3: DURATION (교신 시간 우선)
-        # ----------------------------------------------------------------------
-        elif rule == "DURATION":
-            sorted_candidates = sorted(group_passes, key=lambda x: float(x[1].get('duration', 0)), reverse=True)
-            winner_idx = sorted_candidates[0][0]
+            # 1. Fairness 점수
+            if weights.get('use_fairness', False):
+                w_fair = weights.get('weight_fairness', 50)
+                under_min_bonus = 50.0 if curr_count < min_target else 0.0
+                target_bonus = 20.0 if (equalize_target_sats and sat_clean in equalize_target_sats) else 0.0
+                fairness_component = (-curr_count * 15.0) + under_min_bonus + target_bonus
+                total_score += (fairness_component * (w_fair / 10.0))
 
-        # ----------------------------------------------------------------------
-        # 🎯 규칙 4: SAT_PRIORITY (위성 우선순위)
-        # ----------------------------------------------------------------------
-        elif rule == "SAT_PRIORITY":
-            def prio_sort_key(item):
-                orig_idx, p = item
-                sat_clean = p['satellite'].split('(')[0].strip()
-                prio = sat_priorities.get(sat_clean, 999)
-                max_el = float(p.get('max_el', 0))
-                return (prio, -max_el)
+            # 2. Max Elevation 점수 (0~100 정규화 후 가중치 반영)
+            if weights.get('use_elevation', False):
+                w_el = weights.get('weight_elevation', 25)
+                el_val = float(p.get('max_el', 0))
+                el_norm = (el_val / max(max_el_in_grp, 1.0)) * 100.0
+                total_score += (el_norm * (w_el / 100.0))
 
-            sorted_candidates = sorted(group_passes, key=prio_sort_key)
-            winner_idx = sorted_candidates[0][0]
+            # 3. Pass Duration 점수 (0~100 정규화 후 가중치 반영)
+            if weights.get('use_duration', False):
+                w_dur = weights.get('weight_duration', 25)
+                dur_val = float(p.get('duration', 0))
+                dur_norm = (dur_val / max(max_dur_in_grp, 1.0)) * 100.0
+                total_score += (dur_norm * (w_dur / 100.0))
 
-        # 승자 패스 선택 확정 및 누적 카운트 증가
-        if winner_idx is not None:
-            passes[winner_idx]['selected'] = True
-            win_sat = passes[winner_idx]['satellite'].split('(')[0].strip()
-            sat_selected_counts[win_sat] = sat_selected_counts.get(win_sat, 0) + 1
+            # 4. Satellite Priority 점수
+            if weights.get('use_priority', False):
+                w_prio = weights.get('weight_priority', 50)
+                rank = sat_priorities.get(sat_clean, 99)
+                prio_norm = max(0.0, 100.0 - (rank - 1) * 20.0)
+                total_score += (prio_norm * (w_prio / 100.0))
+
+            if total_score > best_score:
+                best_score = total_score
+                best_idx = idx
+
+        for idx, p in group_items:
+            if idx == best_idx:
+                passes[idx]['selected'] = True
+                winner_sat = passes[idx]['satellite'].split('(')[0].strip()
+                sat_selected_counts[winner_sat] += 1
+            else:
+                passes[idx]['selected'] = False
 
     return passes

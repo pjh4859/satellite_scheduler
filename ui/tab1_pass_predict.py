@@ -14,6 +14,8 @@ from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_co
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
 from core.config_manager import config_manager
 from core.timezone_manager import tz_manager
+from core.schedule_processor import assign_conflict_groups
+from core.conflict_resolver import resolve_conflicts
 
 from ui.dialog_tle_generator import TleFromSepVectorDialog
 from ui.dialog_gantt_chart import GanttChartDialog
@@ -21,9 +23,9 @@ from ui.dialog_equalize_rules import EqualizeRuleDialog
 from ui.dialog_shift_rules import ShiftRuleDialog
 from ui.tab1_file_loader import ExternalScheduleLoader
 from ui.dialog_orbit_map import OrbitMapDialog
-from core.conflict_resolver import resolve_conflicts
 from ui.dialog_conflict_solver import ConflictSolverDialog
 from ui.dialog_analytics import AnalyticsDashboardDialog
+
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
@@ -39,12 +41,14 @@ class PassPredictTab(QWidget):
         self.max_pass_targets = {}
         self.shift_hours_rules = []
         
+        self.auto_resolve_weights = None
+        self.auto_resolve_priorities = None
+        
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
         if not os.path.exists(self.plans_dir):
             os.makedirs(self.plans_dir)
             
-        # 💡 실시간 카운트다운용 QTimer 생성 (1초 주기)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_countdown)
         self.timer.start(1000)
@@ -52,8 +56,6 @@ class PassPredictTab(QWidget):
         self.init_ui()
         self.refresh_tle_files()
         self.refresh_stations()
-        
-        # 💡 이전 세팅 자동 복원
         self.restore_settings()
 
     def init_ui(self):
@@ -85,7 +87,6 @@ class PassPredictTab(QWidget):
         self.btn_gen_vector_tle.setStyleSheet("font-weight: bold; color: #E65100;")
         self.btn_gen_vector_tle.clicked.connect(self.click_generate_tle_from_vector)
         tle_btn_layout.addWidget(self.btn_gen_vector_tle)
-        
         left_panel.addLayout(tle_btn_layout)
         
         # 2. 지상국 목록
@@ -103,10 +104,9 @@ class PassPredictTab(QWidget):
         self.btn_open_gs_folder = QPushButton("📂 Open Folder")
         self.btn_open_gs_folder.clicked.connect(lambda: self.open_local_folder(self.stations_dir))
         gs_btn_layout.addWidget(self.btn_open_gs_folder)
-        
         left_panel.addLayout(gs_btn_layout)
         
-        # 3. 시간 설정 (UTC 기준)
+        # 3. 시간 설정
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         
@@ -175,9 +175,7 @@ class PassPredictTab(QWidget):
         self.btn_open_equalize_dialog.clicked.connect(self.click_open_equalize_dialog)
         left_panel.addWidget(self.btn_open_equalize_dialog)
         
-        self.lbl_logic_desc = QLabel(
-            "<i>ℹ️ Shift Hours & Swarm fair distribution algorithm per satellite.</i>"
-        )
+        self.lbl_logic_desc = QLabel("<i>ℹ️ Shift Hours & Swarm fair distribution algorithm per satellite.</i>")
         self.lbl_logic_desc.setWordWrap(True)
         self.lbl_logic_desc.setStyleSheet("color: #555555; font-size: 11px; margin-bottom: 5px; margin-left: 15px;")
         left_panel.addWidget(self.lbl_logic_desc)
@@ -186,7 +184,6 @@ class PassPredictTab(QWidget):
         self.btn_calculate.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;")
         self.btn_calculate.clicked.connect(self.run_scheduling)
         left_panel.addWidget(self.btn_calculate)
-        
         layout.addLayout(left_panel, stretch=1)
         
         # ----------------------------------------------------------------------
@@ -194,9 +191,7 @@ class PassPredictTab(QWidget):
         # ----------------------------------------------------------------------
         right_panel = QVBoxLayout()
         
-        # 💡 [신규] 상단 실시간 카운트다운 & 타임존 셀렉터 컨트롤 바
         top_tz_bar = QHBoxLayout()
-        
         self.lbl_countdown = QLabel("⏳ Next Pass: No passes scheduled")
         self.lbl_countdown.setStyleSheet(
             "font-size: 13px; font-weight: bold; color: #0D47A1; "
@@ -209,7 +204,6 @@ class PassPredictTab(QWidget):
         self.combo_tz.addItems(["UTC", "KST (UTC+9)"])
         self.combo_tz.currentIndexChanged.connect(self.on_timezone_changed)
         top_tz_bar.addWidget(self.combo_tz)
-        
         right_panel.addLayout(top_tz_bar)
 
         select_all_layout = QHBoxLayout()
@@ -233,7 +227,6 @@ class PassPredictTab(QWidget):
         self.btn_open_pass_out = QPushButton("📂 Open Pass Output")
         self.btn_open_pass_out.clicked.connect(lambda: self.open_local_folder(self.pass_output_dir))
         select_all_layout.addWidget(self.btn_open_pass_out)       
-            
         select_all_layout.addStretch()
 
         self.chk_highlight_conflict = QCheckBox("Highlight Conflicts (⚠️)")
@@ -253,7 +246,6 @@ class PassPredictTab(QWidget):
         self.radio_color_sat = QRadioButton("By Satellite")
         self.radio_color_sat.toggled.connect(self.on_color_mode_changed)
         layout_color.addWidget(self.radio_color_sat)
-
         select_all_layout.addWidget(group_color)
         
         self.btn_select_all = QPushButton("☑ Check All")
@@ -278,12 +270,10 @@ class PassPredictTab(QWidget):
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setDefaultSectionSize(145)
-        
         self.table.itemChanged.connect(self.handle_table_lock)
         right_panel.addWidget(self.table)
         
         btn_layout = QHBoxLayout()
-        
         self.btn_gantt_chart = QPushButton("📊 View Gantt Timeline Chart")
         self.btn_gantt_chart.setStyleSheet("background-color: #6A1B9A; color: white; font-weight: bold;")
         self.btn_gantt_chart.clicked.connect(self.click_view_gantt_chart)
@@ -324,15 +314,11 @@ class PassPredictTab(QWidget):
     # ⏰ 실시간 카운트다운 & 타임존 이벤트
     # --------------------------------------------------------------------------
     def on_timezone_changed(self, idx):
-        """타임존 콤보박스 변경 시 호출"""
         selected_tz = "KST" if idx == 1 else "UTC"
         tz_manager.set_timezone(selected_tz)
-        
-        # 테이블 컬럼 헤더 갱신
         tz_str = tz_manager.current_tz
         self.table.setHorizontalHeaderItem(4, QTableWidgetItem(f"AOS ({tz_str})"))
         self.table.setHorizontalHeaderItem(5, QTableWidgetItem(f"LOS ({tz_str})"))
-        
         self.populate_table()
 
     def click_view_analytics(self):
@@ -352,7 +338,6 @@ class PassPredictTab(QWidget):
         dialog.exec()
 
     def update_countdown(self):
-        """1초 주기로 실시간 카운트다운 타이머 갱신"""
         if not getattr(self.main_app, 'calculated_passes', None):
             self.lbl_countdown.setText("⏳ Next Pass: No passes scheduled")
             self.lbl_countdown.setStyleSheet(
@@ -426,7 +411,7 @@ class PassPredictTab(QWidget):
             )
 
     # --------------------------------------------------------------------------
-    # 💾 설정 저장 및 복원 (Config Persistence)
+    # 💾 설정 저장 및 복원 (Auto Resolve 설정 포함)
     # --------------------------------------------------------------------------
     def save_settings(self):
         if getattr(self, 'is_restoring', False):
@@ -465,40 +450,11 @@ class PassPredictTab(QWidget):
             "min_pass_targets": self.min_pass_targets,
             "max_pass_targets": self.max_pass_targets,
             "color_mode": self.color_mode,
-            "display_tz": tz_manager.current_tz
+            "display_tz": tz_manager.current_tz,
+            "auto_resolve_weights": getattr(self, 'auto_resolve_weights', None),
+            "auto_resolve_priorities": getattr(self, 'auto_resolve_priorities', None)
         }
         config_manager.save_config(config_data)
-
-    def click_auto_resolve(self):
-        if not getattr(self.main_app, 'calculated_passes', None):
-            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
-            return
-
-        # 모든 위성 목록 수집
-        all_sats = set()
-        for p in self.main_app.calculated_passes:
-            sat_clean = p['satellite'].split('(')[0].strip()
-            all_sats.add(sat_clean)
-
-        dialog = ConflictSolverDialog(all_satellites=all_sats, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            rule, sat_priorities = dialog.get_results()
-
-            # 충돌 해결 엔진 실행
-            resolved_passes = resolve_conflicts(
-                passes=self.main_app.calculated_passes,
-                rule=rule,
-                sat_priorities=sat_priorities
-            )
-            self.main_app.calculated_passes = resolved_passes
-
-            # 테이블 및 요약 패널 UI 재갱신
-            self.populate_table()
-
-            QMessageBox.information(
-                self, "Auto Resolution Complete", 
-                f"Successfully resolved conflicts using '{rule}' strategy!"
-            )
 
     def restore_settings(self):
         config_data = config_manager.load_config()
@@ -551,6 +507,9 @@ class PassPredictTab(QWidget):
             self.min_pass_targets = tab1_cfg.get("min_pass_targets", {})
             self.max_pass_targets = tab1_cfg.get("max_pass_targets", {})
 
+            self.auto_resolve_weights = tab1_cfg.get("auto_resolve_weights", None)
+            self.auto_resolve_priorities = tab1_cfg.get("auto_resolve_priorities", None)
+
             saved_tle = set(tab1_cfg.get("selected_tle_files", []))
             for i in range(self.tle_file_list.count()):
                 item = self.tle_file_list.item(i)
@@ -573,7 +532,6 @@ class PassPredictTab(QWidget):
             else:
                 self.radio_color_station.setChecked(True)
 
-            # 타임존 설정 복원
             saved_tz = tab1_cfg.get("display_tz", "UTC")
             if saved_tz == "KST":
                 self.combo_tz.setCurrentIndex(1)
@@ -582,6 +540,51 @@ class PassPredictTab(QWidget):
         finally:
             self.blockSignals(False)
             self.is_restoring = False
+
+    def click_auto_resolve(self):
+        if not getattr(self.main_app, 'calculated_passes', None):
+            QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
+            return
+
+        all_sats = set()
+        for p in self.main_app.calculated_passes:
+            sat_clean = p['satellite'].split('(')[0].strip()
+            all_sats.add(sat_clean)
+
+        dialog = ConflictSolverDialog(
+            all_satellites=all_sats,
+            equalize_target_sats=self.equalize_target_sats,
+            min_pass_targets=self.min_pass_targets,
+            max_pass_targets=self.max_pass_targets,
+            saved_weights=getattr(self, 'auto_resolve_weights', None),
+            saved_priorities=getattr(self, 'auto_resolve_priorities', None),
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            weights, sat_priorities, eq_targets, min_targets, max_targets = dialog.get_results()
+
+            self.auto_resolve_weights = weights
+            self.auto_resolve_priorities = sat_priorities
+            self.equalize_target_sats = eq_targets
+            self.min_pass_targets = min_targets
+            self.max_pass_targets = max_targets
+            self.save_settings()
+
+            resolved_passes = resolve_conflicts(
+                passes=self.main_app.calculated_passes,
+                weights=weights,
+                sat_priorities=sat_priorities,
+                equalize_target_sats=self.equalize_target_sats,
+                min_pass_targets=self.min_pass_targets,
+                max_pass_targets=self.max_pass_targets
+            )
+            self.main_app.calculated_passes = resolved_passes
+            self.populate_table()
+
+            QMessageBox.information(
+                self, "Auto Resolution Complete", 
+                "Successfully resolved conflicts with saved weighted strategy!"
+            )
 
     # --------------------------------------------------------------------------
     # 외부 파일 로더 연결
@@ -604,14 +607,17 @@ class PassPredictTab(QWidget):
                 QMessageBox.warning(self, "Warning", "The selected schedule file contains no valid pass data.")
                 return
 
-            self.main_app.calculated_passes = parsed_passes
+            self.main_app.calculated_passes = assign_conflict_groups(parsed_passes)
             self.populate_table()
 
             filename = os.path.basename(path)
-            QMessageBox.information(
-                self, "Import Complete", 
-                f"Successfully loaded {len(parsed_passes)} pass records from:\n'{filename}'"
-            )
+            conflict_count = len({p['conflict_group'] for p in self.main_app.calculated_passes if p.get('conflict_group') is not None})
+            
+            msg = f"Successfully loaded {len(parsed_passes)} pass records from:\n'{filename}'"
+            if conflict_count > 0:
+                msg += f"\n\n⚠️ Identified {conflict_count} conflict group(s) (Ready for Auto Resolve)."
+                
+            QMessageBox.information(self, "Import Complete", msg)
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
@@ -810,7 +816,6 @@ class PassPredictTab(QWidget):
         btn_desel_all = QPushButton("☒ Unselect All")
         btn_desel_all.clicked.connect(list_widget.clearSelection)
         select_ctrl_layout.addWidget(btn_desel_all)
-        
         dlg_layout.addLayout(select_ctrl_layout)
         
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -892,7 +897,6 @@ class PassPredictTab(QWidget):
                 self.table.setItem(row_idx, 2, QTableWidgetItem(p['satellite']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(f"Pass {p['pass_no']}"))
                 
-                # 💡 [핵심] tz_manager를 연동한 동적 타임존 시각 문자열 변환
                 aos_val = tz_manager.format_datetime(p['aos'])
                 los_val = tz_manager.format_datetime(p['los'])
                 
@@ -912,7 +916,8 @@ class PassPredictTab(QWidget):
                     _, base_color = color_manager.get_station_colors(st_raw)
 
                 if "Conflict" in status_text and show_conflict_highlight:
-                    status_item.setText(f"⚠️ {status_text}")
+                    if not status_text.startswith("⚠️"):
+                        status_item.setText(f"⚠️ {status_text}")
                     status_item.setForeground(QColor(180, 0, 0))
                     status_item.setFont(QFont("", -1, QFont.Weight.Bold))
                     row_color = QColor(
@@ -939,7 +944,6 @@ class PassPredictTab(QWidget):
         if not self.main_app.calculated_passes:
             QMessageBox.warning(self, "Warning", "Please calculate or import pass schedule first.")
             return
-        # 💡 [수정] color_mode 매개변수 함께 전달
         dialog = GanttChartDialog(
             calculated_passes=self.main_app.calculated_passes,
             color_mode=self.color_mode,
@@ -961,7 +965,6 @@ class PassPredictTab(QWidget):
         dialog.exec()
 
     def handle_table_lock(self, item):
-        """테이블 체크박스 상태 변경 핸들러 (충돌 패스 다중 자유 체크 허용)"""
         if self.main_app.is_populating or item.column() != 0:
             return
             
@@ -969,14 +972,9 @@ class PassPredictTab(QWidget):
         if not user_data:
             return
             
-        current_row, group_id, station_name = user_data
-        
-        # 💡 [핵심] 다른 충돌 패스를 강제로 Uncheck/Lock하던 제약을 제거합니다.
-        # 사용자가 체크한 상태(Checked / Unchecked)를 백엔드 데이터에 독립적으로 반영합니다.
+        current_row, _, _ = user_data
         is_checked = (item.checkState() == Qt.CheckState.Checked)
         self.main_app.calculated_passes[current_row]['selected'] = is_checked
-        
-        # 요약 패널(Summary Dashboard) 실시간 계산 갱신
         self.update_summary_dashboard()
 
     def click_export_csv(self):
