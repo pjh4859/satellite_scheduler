@@ -1,10 +1,9 @@
 {
     "tab1": {
         "start_time_utc": "2026-10-13 13:53:43",
-        "end_time_utc": "2026-10-20 13:53:43",
+        "end_time_utc": "2026-10-25 13:53:43",
         "selected_tle_files": [
-            "NEONSAT-2.tle",
-            "NEONSAT-4.tle"
+            "NEONSAT-2.tle"
         ],
         "selected_gs_items": [
             "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y]",
@@ -19,35 +18,49 @@
         "shift_hours_rules": [
             {
                 "phase_name": "Phase 1",
-                "start_dt": "2026-10-13 13:53:43",
-                "end_dt": "2026-10-13 16:53:43",
-                "is_24h": false,
-                "days": [
-                    1,
-                    2,
-                    3,
-                    4
-                ]
-            },
-            {
-                "phase_name": "Phase 2",
-                "start_dt": "2026-10-13 21:53:43",
-                "end_dt": "2026-10-18 13:53:43",
+                "start_date": "2026-10-13",
+                "end_date": "2026-10-16",
+                "start_time": "22:53:43",
+                "end_time": "05:00:00",
                 "is_24h": false,
                 "days": [
                     0,
                     1,
-                    2
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ]
+            },
+            {
+                "phase_name": "Phase 2",
+                "start_date": "2026-10-19",
+                "end_date": "2027-10-20",
+                "start_time": "00:00:00",
+                "end_time": "10:00:00",
+                "is_24h": false,
+                "days": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
                 ]
             }
         ],
+        "shift_exempt_stations": [
+            "Daejeon"
+        ],
         "use_equalize": true,
         "equalize_target_sats": [
-            "NEONSAT-2",
-            "NEONSAT-1",
-            "NEONSAT-1A",
+            "SPACEEYE-T1",
             "NEONSAT-3",
-            "SPACEEYE-T1"
+            "NEONSAT-1A",
+            "NEONSAT-1",
+            "NEONSAT-2"
         ],
         "min_pass_targets": {
             "NEONSAT-1": 1,
@@ -63,11 +76,11 @@
             "NEONSAT-3": 20,
             "SPACEEYE-T1": 0
         },
-        "color_mode": "SATELLITE",
+        "color_mode": "STATION",
         "display_tz": "UTC",
         "auto_resolve_weights": {
             "use_fairness": true,
-            "weight_fairness": 74,
+            "weight_fairness": 59,
             "use_elevation": false,
             "weight_elevation": 25,
             "use_duration": false,

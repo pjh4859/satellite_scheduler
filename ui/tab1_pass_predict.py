@@ -492,11 +492,11 @@ class PassPredictTab(QWidget):
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
     def is_pass_in_shift_hours(self, aos_dt, los_dt, station_name=None):
-        """지상국 24/7 예외 검사 및 시프트 구간/요일 마스크 필터링"""
+        """지상국 24/7 예외 검사 및 기간별 매일 시프트(자정 넘김 포함)/요일 필터링"""
         if not self.chk_use_shift_hours.isChecked():
             return True
 
-        # 지상국이 24/7 예외 목록에 포함된 경우 모든 시프트/주말 제약을 무조건 우회(Bypass)
+        # 1. 24/7 예외 지상국 바이패스
         if station_name and station_name in getattr(self, 'shift_exempt_stations', []):
             return True
 
@@ -505,22 +505,42 @@ class PassPredictTab(QWidget):
 
         aos_naive = aos_dt.replace(tzinfo=None) if aos_dt.tzinfo else aos_dt
         los_naive = los_dt.replace(tzinfo=None) if los_dt.tzinfo else los_dt
-        pass_weekday = aos_naive.weekday()
 
         for rule in self.shift_hours_rules:
+            s_date = rule["start_date"]
+            e_date = rule["end_date"]
             active_days = rule.get("days", [0, 1, 2, 3, 4, 5, 6])
-            if pass_weekday not in active_days:
+
+            # 24H Full 모드인 경우 기간 전체 + 시작 요일 검사
+            if rule.get("is_24h", False):
+                full_start = datetime.combine(s_date, time.min)
+                full_end = datetime.combine(e_date, time.max)
+                if full_start <= aos_naive and los_naive <= full_end:
+                    if aos_naive.weekday() in active_days:
+                        return True
                 continue
 
-            s_dt = rule["start_dt"]
-            e_dt = rule["end_dt"]
+            s_time = rule["start_time"]
+            e_time = rule["end_time"]
 
-            if rule.get("is_24h", False):
-                s_dt = datetime.combine(s_dt.date(), time.min)
-                e_dt = datetime.combine(e_dt.date(), time.max)
+            # start_date부터 end_date까지 매일의 근무 구간 생성 검사
+            curr_date = s_date
+            while curr_date <= e_date:
+                # 시작 날짜의 요일이 활성 요일인지 확인
+                if curr_date.weekday() in active_days:
+                    shift_start = datetime.combine(curr_date, s_time)
+                    
+                    # 💡 자정을 넘기는 교대 근무 (예: 23:00 ~ 07:00) -> 익일 07:00까지
+                    if s_time > e_time:
+                        shift_end = datetime.combine(curr_date + timedelta(days=1), e_time)
+                    else:
+                        shift_end = datetime.combine(curr_date, e_time)
 
-            if s_dt <= aos_naive and los_naive <= e_dt:
-                return True
+                    # 패스의 AOS ~ LOS가 이 근무 구간 내에 완전히 들어오는지 검사
+                    if shift_start <= aos_naive and los_naive <= shift_end:
+                        return True
+
+                curr_date += timedelta(days=1)
 
         return False
 
@@ -543,15 +563,16 @@ class PassPredictTab(QWidget):
             day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
             info_tokens = []
             for r in self.shift_hours_rules:
-                s_str = r['start_dt'].strftime('%Y-%m-%d %H:%M')
-                e_str = r['end_dt'].strftime('%Y-%m-%d %H:%M')
+                d_range = f"{r['start_date']} ~ {r['end_date']}"
                 d_list = r.get("days", [0, 1, 2, 3, 4, 5, 6])
                 d_str = "All Days" if len(d_list) == 7 else ("Weekdays" if d_list == [0, 1, 2, 3, 4] else "/".join([day_labels[i] for i in d_list]))
                 
                 if r.get("is_24h", False):
-                    info_tokens.append(f"• {r['phase_name']}: {r['start_dt'].strftime('%Y-%m-%d')} ~ {r['end_dt'].strftime('%Y-%m-%d')} ({d_str}, 24H)")
+                    info_tokens.append(f"• {r['phase_name']}: {d_range} (24H Full, {d_str})")
                 else:
-                    info_tokens.append(f"• {r['phase_name']}: {s_str} ~ {e_str} UTC ({d_str})")
+                    overnight = " 🌙(+1d)" if r['start_time'] > r['end_time'] else ""
+                    t_str = f"{r['start_time'].strftime('%H:%M')} ~ {r['end_time'].strftime('%H:%M')}{overnight} UTC"
+                    info_tokens.append(f"• {r['phase_name']}: {d_range} [{t_str}] ({d_str})")
 
             exempt_msg = f"\n\n🌐 24/7 Always Active Stations:\n• {', '.join(self.shift_exempt_stations)}" if self.shift_exempt_stations else "\n\n🌐 24/7 Always Active Stations: None"
             msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens) + exempt_msg
@@ -568,8 +589,10 @@ class PassPredictTab(QWidget):
         for r in self.shift_hours_rules:
             serialized_shift_rules.append({
                 "phase_name": r.get("phase_name", ""),
-                "start_dt": r["start_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["start_dt"], datetime) else str(r["start_dt"]),
-                "end_dt": r["end_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["end_dt"], datetime) else str(r["end_dt"]),
+                "start_date": r["start_date"].isoformat() if isinstance(r["start_date"], date) else str(r["start_date"]),
+                "end_date": r["end_date"].isoformat() if isinstance(r["end_date"], date) else str(r["end_date"]),
+                "start_time": r["start_time"].strftime("%H:%M:%S") if isinstance(r["start_time"], time) else str(r["start_time"]),
+                "end_time": r["end_time"].strftime("%H:%M:%S") if isinstance(r["end_time"], time) else str(r["end_time"]),
                 "is_24h": r.get("is_24h", False),
                 "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
             })
@@ -629,12 +652,25 @@ class PassPredictTab(QWidget):
             restored_rules = []
             for r in raw_rules:
                 try:
-                    s_dt = datetime.strptime(r["start_dt"], "%Y-%m-%d %H:%M:%S")
-                    e_dt = datetime.strptime(r["end_dt"], "%Y-%m-%d %H:%M:%S")
+                    # 신형 포맷 (date, time 분리)
+                    if "start_date" in r:
+                        s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
+                        e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
+                        s_time = datetime.strptime(r["start_time"], "%H:%M:%S").time()
+                        e_time = datetime.strptime(r["end_time"], "%H:%M:%S").time()
+                    # 이전 datetime 포맷 호환
+                    else:
+                        s_dt = datetime.strptime(r["start_dt"], "%Y-%m-%d %H:%M:%S")
+                        e_dt = datetime.strptime(r["end_dt"], "%Y-%m-%d %H:%M:%S")
+                        s_date, e_date = s_dt.date(), e_dt.date()
+                        s_time, e_time = s_dt.time(), e_dt.time()
+
                     restored_rules.append({
                         "phase_name": r.get("phase_name", "Shift"),
-                        "start_dt": s_dt,
-                        "end_dt": e_dt,
+                        "start_date": s_date,
+                        "end_date": e_date,
+                        "start_time": s_time,
+                        "end_time": e_time,
                         "is_24h": r.get("is_24h", False),
                         "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
                     })
