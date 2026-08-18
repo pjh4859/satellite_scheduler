@@ -16,14 +16,27 @@
         "min_dur": 300,
         "start_pass_no": 1,
         "use_shift_hours": true,
-        "shift_hours_rules": [],
+        "shift_hours_rules": [
+            {
+                "phase_name": "Phase 1",
+                "start_dt": "2026-10-13 13:53:43",
+                "end_dt": "2026-10-13 16:53:43",
+                "is_24h": false
+            },
+            {
+                "phase_name": "Phase 2",
+                "start_dt": "2026-10-13 21:53:43",
+                "end_dt": "2026-10-14 13:53:43",
+                "is_24h": false
+            }
+        ],
         "use_equalize": true,
         "equalize_target_sats": [
-            "NEONSAT-1",
+            "NEONSAT-1A",
             "SPACEEYE-T1",
-            "NEONSAT-3",
             "NEONSAT-2",
-            "NEONSAT-1A"
+            "NEONSAT-3",
+            "NEONSAT-1"
         ],
         "min_pass_targets": {
             "NEONSAT-1": 1,

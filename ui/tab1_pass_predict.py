@@ -410,136 +410,9 @@ class PassPredictTab(QWidget):
                 "background-color: #E0E0E0; padding: 6px 12px; border-radius: 4px;"
             )
 
-    # --------------------------------------------------------------------------
-    # 💾 설정 저장 및 복원 (Auto Resolve 설정 포함)
-    # --------------------------------------------------------------------------
-    def save_settings(self):
-        if getattr(self, 'is_restoring', False):
-            return
+    
 
-        selected_tle = [item.text() for item in self.tle_file_list.selectedItems()]
-        selected_gs = [item.text() for item in self.gs_list.selectedItems()]
-
-        serialized_shift_rules = []
-        for r in self.shift_hours_rules:
-            serialized_shift_rules.append({
-                "phase_name": r.get("phase_name", ""),
-                "start_date": r["start_date"].isoformat() if isinstance(r["start_date"], date) else str(r["start_date"]),
-                "end_date": r["end_date"].isoformat() if isinstance(r["end_date"], date) else str(r["end_date"]),
-                "start_time": r["start_time"].strftime("%H:%M:%S") if isinstance(r["start_time"], time) else str(r["start_time"]),
-                "end_time": r["end_time"].strftime("%H:%M:%S") if isinstance(r["end_time"], time) else str(r["end_time"]),
-                "is_24h": r.get("is_24h", False)
-            })
-
-        start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
-        end_dt_str = self.end_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
-
-        config_data = config_manager.load_config()
-        config_data["tab1"] = {
-            "start_time_utc": start_dt_str,
-            "end_time_utc": end_dt_str,
-            "selected_tle_files": selected_tle,
-            "selected_gs_items": selected_gs,
-            "min_el": self.min_el_spin.value(),
-            "min_dur": self.min_dur_spin.value(),
-            "start_pass_no": self.start_pass_spin.value(),
-            "use_shift_hours": self.chk_use_shift_hours.isChecked(),
-            "shift_hours_rules": serialized_shift_rules,
-            "use_equalize": self.chk_equalize_sat.isChecked(),
-            "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
-            "min_pass_targets": self.min_pass_targets,
-            "max_pass_targets": self.max_pass_targets,
-            "color_mode": self.color_mode,
-            "display_tz": tz_manager.current_tz,
-            "auto_resolve_weights": getattr(self, 'auto_resolve_weights', None),
-            "auto_resolve_priorities": getattr(self, 'auto_resolve_priorities', None)
-        }
-        config_manager.save_config(config_data)
-
-    def restore_settings(self):
-        config_data = config_manager.load_config()
-        tab1_cfg = config_data.get("tab1", {})
-        if not tab1_cfg:
-            return
-
-        self.is_restoring = True
-        self.blockSignals(True)
-        try:
-            if "start_time_utc" in tab1_cfg:
-                s_qdt = QDateTime.fromString(tab1_cfg["start_time_utc"], "yyyy-MM-dd HH:mm:ss")
-                if s_qdt.isValid():
-                    self.start_time_edit.setDateTime(s_qdt)
-
-            if "end_time_utc" in tab1_cfg:
-                e_qdt = QDateTime.fromString(tab1_cfg["end_time_utc"], "yyyy-MM-dd HH:mm:ss")
-                if e_qdt.isValid():
-                    self.end_time_edit.setDateTime(e_qdt)
-
-            if "min_el" in tab1_cfg: self.min_el_spin.setValue(tab1_cfg["min_el"])
-            if "min_dur" in tab1_cfg: self.min_dur_spin.setValue(tab1_cfg["min_dur"])
-            if "start_pass_no" in tab1_cfg: self.start_pass_spin.setValue(tab1_cfg["start_pass_no"])
-            if "use_shift_hours" in tab1_cfg: self.chk_use_shift_hours.setChecked(tab1_cfg["use_shift_hours"])
-            if "use_equalize" in tab1_cfg: self.chk_equalize_sat.setChecked(tab1_cfg["use_equalize"])
-
-            raw_rules = tab1_cfg.get("shift_hours_rules", [])
-            restored_rules = []
-            for r in raw_rules:
-                try:
-                    s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
-                    e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
-                    s_time = datetime.strptime(r["start_time"], "%H:%M:%S").time()
-                    e_time = datetime.strptime(r["end_time"], "%H:%M:%S").time()
-                    restored_rules.append({
-                        "phase_name": r.get("phase_name", "Phase"),
-                        "start_date": s_date,
-                        "end_date": e_date,
-                        "start_time": s_time,
-                        "end_time": e_time,
-                        "is_24h": r.get("is_24h", False)
-                    })
-                except Exception:
-                    continue
-            if restored_rules:
-                self.shift_hours_rules = restored_rules
-
-            if tab1_cfg.get("equalize_target_sats") is not None:
-                self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
-            self.min_pass_targets = tab1_cfg.get("min_pass_targets", {})
-            self.max_pass_targets = tab1_cfg.get("max_pass_targets", {})
-
-            self.auto_resolve_weights = tab1_cfg.get("auto_resolve_weights", None)
-            self.auto_resolve_priorities = tab1_cfg.get("auto_resolve_priorities", None)
-
-            saved_tle = set(tab1_cfg.get("selected_tle_files", []))
-            for i in range(self.tle_file_list.count()):
-                item = self.tle_file_list.item(i)
-                if saved_tle:
-                    item.setSelected(item.text() in saved_tle)
-                else:
-                    item.setSelected(True)
-
-            saved_gs = set(tab1_cfg.get("selected_gs_items", []))
-            for i in range(self.gs_list.count()):
-                item = self.gs_list.item(i)
-                if saved_gs:
-                    item.setSelected(item.text() in saved_gs)
-                else:
-                    item.setSelected(True)
-
-            color_mode = tab1_cfg.get("color_mode", "STATION")
-            if color_mode == "SATELLITE":
-                self.radio_color_sat.setChecked(True)
-            else:
-                self.radio_color_station.setChecked(True)
-
-            saved_tz = tab1_cfg.get("display_tz", "UTC")
-            if saved_tz == "KST":
-                self.combo_tz.setCurrentIndex(1)
-            else:
-                self.combo_tz.setCurrentIndex(0)
-        finally:
-            self.blockSignals(False)
-            self.is_restoring = False
+    
 
     def click_auto_resolve(self):
         if not getattr(self.main_app, 'calculated_passes', None):
@@ -621,6 +494,31 @@ class PassPredictTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
 
+    
+
+    def is_pass_in_shift_hours(self, aos_dt, los_dt):
+        """패스의 AOS~LOS 구간이 지정된 Shift DateTime 구간 중 하나에 완전히 포함되는지 검사"""
+        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
+            return True
+
+        aos_naive = aos_dt.replace(tzinfo=None) if aos_dt.tzinfo else aos_dt
+        los_naive = los_dt.replace(tzinfo=None) if los_dt.tzinfo else los_dt
+
+        for rule in self.shift_hours_rules:
+            s_dt = rule["start_dt"]
+            e_dt = rule["end_dt"]
+
+            # 24H Full 옵션인 경우 해당 시작일의 00:00부터 종료일의 23:59:59까지 커버
+            if rule.get("is_24h", False):
+                s_dt = datetime.combine(s_dt.date(), time.min)
+                e_dt = datetime.combine(e_dt.date(), time.max)
+
+            # AOS와 LOS가 시프트 구간 내에 속하는지 검사
+            if s_dt <= aos_naive and los_naive <= e_dt:
+                return True
+
+        return False
+
     def click_open_shift_dialog(self):
         base_start_dt = self.start_time_edit.dateTime().toPyDateTime()
         dialog = ShiftRuleDialog(current_rules=self.shift_hours_rules, base_start_dt=base_start_dt, parent=self)
@@ -631,39 +529,139 @@ class PassPredictTab(QWidget):
             
             info_tokens = []
             for r in self.shift_hours_rules:
-                if r["is_24h"]:
-                    info_tokens.append(f"• {r['phase_name']}: 24H Full")
+                s_str = r['start_dt'].strftime('%Y-%m-%d %H:%M')
+                e_str = r['end_dt'].strftime('%Y-%m-%d %H:%M')
+                if r.get("is_24h", False):
+                    info_tokens.append(f"• {r['phase_name']}: {r['start_dt'].strftime('%Y-%m-%d')} ~ {r['end_dt'].strftime('%Y-%m-%d')} (24H Full)")
                 else:
-                    info_tokens.append(f"• {r['phase_name']}: {r['start_time'].strftime('%H:%M')}~{r['end_time'].strftime('%H:%M')} UTC")
+                    info_tokens.append(f"• {r['phase_name']}: {s_str} ~ {e_str} UTC")
             
             msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
             QMessageBox.information(self, "Shift Rules Updated", msg)
 
-    def is_pass_in_shift_hours(self, aos_dt, los_dt):
-        if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
-            return True
+    def save_settings(self):
+        if getattr(self, 'is_restoring', False):
+            return
 
-        pass_date = aos_dt.date()
-        pass_start_time = aos_dt.time()
-        pass_end_time = los_dt.time()
+        selected_tle = [item.text() for item in self.tle_file_list.selectedItems()]
+        selected_gs = [item.text() for item in self.gs_list.selectedItems()]
 
-        for rule in self.shift_hours_rules:
-            if rule["start_date"] <= pass_date <= rule["end_date"]:
-                if rule.get("is_24h", False):
-                    return True
-                
-                s_time = rule["start_time"]
-                e_time = rule["end_time"]
+        # 절대 DateTime 포맷으로 직렬화 저장
+        serialized_shift_rules = []
+        for r in self.shift_hours_rules:
+            serialized_shift_rules.append({
+                "phase_name": r.get("phase_name", ""),
+                "start_dt": r["start_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["start_dt"], datetime) else str(r["start_dt"]),
+                "end_dt": r["end_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["end_dt"], datetime) else str(r["end_dt"]),
+                "is_24h": r.get("is_24h", False)
+            })
 
-                if s_time <= e_time:
-                    if s_time <= pass_start_time and pass_end_time <= e_time:
-                        return True
+        start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+        end_dt_str = self.end_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
+
+        config_data = config_manager.load_config()
+        config_data["tab1"] = {
+            "start_time_utc": start_dt_str,
+            "end_time_utc": end_dt_str,
+            "selected_tle_files": selected_tle,
+            "selected_gs_items": selected_gs,
+            "min_el": self.min_el_spin.value(),
+            "min_dur": self.min_dur_spin.value(),
+            "start_pass_no": self.start_pass_spin.value(),
+            "use_shift_hours": self.chk_use_shift_hours.isChecked(),
+            "shift_hours_rules": serialized_shift_rules,
+            "use_equalize": self.chk_equalize_sat.isChecked(),
+            "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
+            "min_pass_targets": self.min_pass_targets,
+            "max_pass_targets": self.max_pass_targets,
+            "color_mode": self.color_mode,
+            "display_tz": tz_manager.current_tz,
+            "auto_resolve_weights": getattr(self, 'auto_resolve_weights', None),
+            "auto_resolve_priorities": getattr(self, 'auto_resolve_priorities', None)
+        }
+        config_manager.save_config(config_data)
+
+    def restore_settings(self):
+        config_data = config_manager.load_config()
+        tab1_cfg = config_data.get("tab1", {})
+        if not tab1_cfg:
+            return
+
+        self.is_restoring = True
+        self.blockSignals(True)
+        try:
+            if "start_time_utc" in tab1_cfg:
+                s_qdt = QDateTime.fromString(tab1_cfg["start_time_utc"], "yyyy-MM-dd HH:mm:ss")
+                if s_qdt.isValid():
+                    self.start_time_edit.setDateTime(s_qdt)
+
+            if "end_time_utc" in tab1_cfg:
+                e_qdt = QDateTime.fromString(tab1_cfg["end_time_utc"], "yyyy-MM-dd HH:mm:ss")
+                if e_qdt.isValid():
+                    self.end_time_edit.setDateTime(e_qdt)
+
+            if "min_el" in tab1_cfg: self.min_el_spin.setValue(tab1_cfg["min_el"])
+            if "min_dur" in tab1_cfg: self.min_dur_spin.setValue(tab1_cfg["min_dur"])
+            if "start_pass_no" in tab1_cfg: self.start_pass_spin.setValue(tab1_cfg["start_pass_no"])
+            if "use_shift_hours" in tab1_cfg: self.chk_use_shift_hours.setChecked(tab1_cfg["use_shift_hours"])
+            if "use_equalize" in tab1_cfg: self.chk_equalize_sat.setChecked(tab1_cfg["use_equalize"])
+
+            # Shift Rules 절대 DateTime 복원
+            raw_rules = tab1_cfg.get("shift_hours_rules", [])
+            restored_rules = []
+            for r in raw_rules:
+                try:
+                    s_dt = datetime.strptime(r["start_dt"], "%Y-%m-%d %H:%M:%S")
+                    e_dt = datetime.strptime(r["end_dt"], "%Y-%m-%d %H:%M:%S")
+                    restored_rules.append({
+                        "phase_name": r.get("phase_name", "Shift"),
+                        "start_dt": s_dt,
+                        "end_dt": e_dt,
+                        "is_24h": r.get("is_24h", False)
+                    })
+                except Exception:
+                    continue
+            if restored_rules:
+                self.shift_hours_rules = restored_rules
+
+            if tab1_cfg.get("equalize_target_sats") is not None:
+                self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
+            self.min_pass_targets = tab1_cfg.get("min_pass_targets", {})
+            self.max_pass_targets = tab1_cfg.get("max_pass_targets", {})
+
+            self.auto_resolve_weights = tab1_cfg.get("auto_resolve_weights", None)
+            self.auto_resolve_priorities = tab1_cfg.get("auto_resolve_priorities", None)
+
+            saved_tle = set(tab1_cfg.get("selected_tle_files", []))
+            for i in range(self.tle_file_list.count()):
+                item = self.tle_file_list.item(i)
+                if saved_tle:
+                    item.setSelected(item.text() in saved_tle)
                 else:
-                    if pass_start_time >= s_time or pass_end_time <= e_time:
-                        return True
-                return False
+                    item.setSelected(True)
 
-        return True
+            saved_gs = set(tab1_cfg.get("selected_gs_items", []))
+            for i in range(self.gs_list.count()):
+                item = self.gs_list.item(i)
+                if saved_gs:
+                    item.setSelected(item.text() in saved_gs)
+                else:
+                    item.setSelected(True)
+
+            color_mode = tab1_cfg.get("color_mode", "STATION")
+            if color_mode == "SATELLITE":
+                self.radio_color_sat.setChecked(True)
+            else:
+                self.radio_color_station.setChecked(True)
+
+            saved_tz = tab1_cfg.get("display_tz", "UTC")
+            if saved_tz == "KST":
+                self.combo_tz.setCurrentIndex(1)
+            else:
+                self.combo_tz.setCurrentIndex(0)
+        finally:
+            self.blockSignals(False)
+            self.is_restoring = False
 
     def run_scheduling(self):
         self.save_settings()
