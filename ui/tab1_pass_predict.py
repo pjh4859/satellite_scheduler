@@ -497,23 +497,29 @@ class PassPredictTab(QWidget):
     
 
     def is_pass_in_shift_hours(self, aos_dt, los_dt):
-        """패스의 AOS~LOS 구간이 지정된 Shift DateTime 구간 중 하나에 완전히 포함되는지 검사"""
+        """패스의 AOS~LOS 구간 및 요일이 지정된 Shift Rule 중 하나에 만족하는지 검사"""
         if not self.chk_use_shift_hours.isChecked() or not self.shift_hours_rules:
             return True
 
         aos_naive = aos_dt.replace(tzinfo=None) if aos_dt.tzinfo else aos_dt
         los_naive = los_dt.replace(tzinfo=None) if los_dt.tzinfo else los_dt
+        pass_weekday = aos_naive.weekday()  # 0=Mon, 6=Sun
 
         for rule in self.shift_hours_rules:
+            # 1. 요일(Day of Week) 마스크 검사
+            active_days = rule.get("days", [0, 1, 2, 3, 4, 5, 6])
+            if pass_weekday not in active_days:
+                continue
+
             s_dt = rule["start_dt"]
             e_dt = rule["end_dt"]
 
-            # 24H Full 옵션인 경우 해당 시작일의 00:00부터 종료일의 23:59:59까지 커버
+            # 24H Full 옵션 처리
             if rule.get("is_24h", False):
                 s_dt = datetime.combine(s_dt.date(), time.min)
                 e_dt = datetime.combine(e_dt.date(), time.max)
 
-            # AOS와 LOS가 시프트 구간 내에 속하는지 검사
+            # 2. DateTime 구간 포함 여부 검사
             if s_dt <= aos_naive and los_naive <= e_dt:
                 return True
 
@@ -527,14 +533,18 @@ class PassPredictTab(QWidget):
             self.chk_use_shift_hours.setChecked(True)
             self.save_settings()
             
+            day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
             info_tokens = []
             for r in self.shift_hours_rules:
                 s_str = r['start_dt'].strftime('%Y-%m-%d %H:%M')
                 e_str = r['end_dt'].strftime('%Y-%m-%d %H:%M')
+                d_list = r.get("days", [0, 1, 2, 3, 4, 5, 6])
+                d_str = "All Days" if len(d_list) == 7 else ("Weekdays" if d_list == [0, 1, 2, 3, 4] else "/".join([day_labels[i] for i in d_list]))
+                
                 if r.get("is_24h", False):
-                    info_tokens.append(f"• {r['phase_name']}: {r['start_dt'].strftime('%Y-%m-%d')} ~ {r['end_dt'].strftime('%Y-%m-%d')} (24H Full)")
+                    info_tokens.append(f"• {r['phase_name']}: {r['start_dt'].strftime('%Y-%m-%d')} ~ {r['end_dt'].strftime('%Y-%m-%d')} ({d_str}, 24H)")
                 else:
-                    info_tokens.append(f"• {r['phase_name']}: {s_str} ~ {e_str} UTC")
+                    info_tokens.append(f"• {r['phase_name']}: {s_str} ~ {e_str} UTC ({d_str})")
             
             msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens)
             QMessageBox.information(self, "Shift Rules Updated", msg)
@@ -546,14 +556,14 @@ class PassPredictTab(QWidget):
         selected_tle = [item.text() for item in self.tle_file_list.selectedItems()]
         selected_gs = [item.text() for item in self.gs_list.selectedItems()]
 
-        # 절대 DateTime 포맷으로 직렬화 저장
         serialized_shift_rules = []
         for r in self.shift_hours_rules:
             serialized_shift_rules.append({
                 "phase_name": r.get("phase_name", ""),
                 "start_dt": r["start_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["start_dt"], datetime) else str(r["start_dt"]),
                 "end_dt": r["end_dt"].strftime("%Y-%m-%d %H:%M:%S") if isinstance(r["end_dt"], datetime) else str(r["end_dt"]),
-                "is_24h": r.get("is_24h", False)
+                "is_24h": r.get("is_24h", False),
+                "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
             })
 
         start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
@@ -606,7 +616,6 @@ class PassPredictTab(QWidget):
             if "use_shift_hours" in tab1_cfg: self.chk_use_shift_hours.setChecked(tab1_cfg["use_shift_hours"])
             if "use_equalize" in tab1_cfg: self.chk_equalize_sat.setChecked(tab1_cfg["use_equalize"])
 
-            # Shift Rules 절대 DateTime 복원
             raw_rules = tab1_cfg.get("shift_hours_rules", [])
             restored_rules = []
             for r in raw_rules:
@@ -617,7 +626,8 @@ class PassPredictTab(QWidget):
                         "phase_name": r.get("phase_name", "Shift"),
                         "start_dt": s_dt,
                         "end_dt": e_dt,
-                        "is_24h": r.get("is_24h", False)
+                        "is_24h": r.get("is_24h", False),
+                        "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
                     })
                 except Exception:
                     continue

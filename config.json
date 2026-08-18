@@ -1,7 +1,7 @@
 {
     "tab1": {
         "start_time_utc": "2026-10-13 13:53:43",
-        "end_time_utc": "2026-10-15 13:53:43",
+        "end_time_utc": "2026-10-20 13:53:43",
         "selected_tle_files": [
             "NEONSAT-2.tle",
             "NEONSAT-4.tle"
@@ -21,22 +21,33 @@
                 "phase_name": "Phase 1",
                 "start_dt": "2026-10-13 13:53:43",
                 "end_dt": "2026-10-13 16:53:43",
-                "is_24h": false
+                "is_24h": false,
+                "days": [
+                    1,
+                    2,
+                    3,
+                    4
+                ]
             },
             {
                 "phase_name": "Phase 2",
                 "start_dt": "2026-10-13 21:53:43",
-                "end_dt": "2026-10-14 13:53:43",
-                "is_24h": false
+                "end_dt": "2026-10-18 13:53:43",
+                "is_24h": false,
+                "days": [
+                    0,
+                    1,
+                    2
+                ]
             }
         ],
         "use_equalize": true,
         "equalize_target_sats": [
-            "NEONSAT-1A",
-            "SPACEEYE-T1",
             "NEONSAT-2",
+            "NEONSAT-1",
+            "NEONSAT-1A",
             "NEONSAT-3",
-            "NEONSAT-1"
+            "SPACEEYE-T1"
         ],
         "min_pass_targets": {
             "NEONSAT-1": 1,
