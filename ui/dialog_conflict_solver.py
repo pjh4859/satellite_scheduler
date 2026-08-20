@@ -1,29 +1,33 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QGroupBox, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QCheckBox, QSlider, QMessageBox, QFrame)
+                             QHeaderView, QCheckBox, QSlider, QMessageBox, QFrame,
+                             QListWidget, QListWidgetItem)
 from PyQt6.QtCore import Qt
 from ui.dialog_equalize_rules import EqualizeRuleDialog
 
 class ConflictSolverDialog(QDialog):
     def __init__(self, all_satellites, equalize_target_sats=None, min_pass_targets=None, 
-                 max_pass_targets=None, saved_weights=None, saved_priorities=None, parent=None):
+                 max_pass_targets=None, saved_weights=None, saved_priorities=None,
+                 all_stations=None, saved_excluded_stations=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚡ Multi-Weighted Auto Conflict Resolution")
-        self.resize(580, 700)
+        self.resize(580, 820)
         
         self.all_satellites = sorted(list(all_satellites))
+        self.all_stations = sorted(list(all_stations or []))
         self.equalize_target_sats = equalize_target_sats
         self.min_pass_targets = min_pass_targets or {}
         self.max_pass_targets = max_pass_targets or {}
         self.saved_weights = saved_weights or {}
         self.saved_priorities = saved_priorities or {}
+        self.saved_excluded_stations = set(saved_excluded_stations or [])
         
         self.init_ui()
         self.restore_saved_inputs()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b>Select criteria and configure their relative weights (%):</b>"))
+        layout.addWidget(QLabel("<b>Configure Auto-Resolve criteria, weights, and station exclusions:</b>"))
 
         # 1. Fairness 가중치 섹션
         self.box_fairness = QGroupBox()
@@ -135,27 +139,47 @@ class ConflictSolverDialog(QDialog):
         box_prio_lay.addWidget(self.priority_table)
         layout.addWidget(self.box_priority)
 
+        # 5. 지상국 제외(Excluded Ground Stations) 섹션
+        self.box_stations = QGroupBox("🚫 Exclude Ground Stations from Auto-Resolve")
+        self.box_stations.setStyleSheet("QGroupBox { font-weight: bold; color: #C62828; }")
+        box_st_lay = QVBoxLayout(self.box_stations)
+        
+        lbl_ex_desc = QLabel("Checked stations will be <b>bypassed from auto-resolution</b> (Unselected):")
+        lbl_ex_desc.setStyleSheet("color: #555555; font-size: 11px;")
+        box_st_lay.addWidget(lbl_ex_desc)
+
+        self.list_stations = QListWidget()
+        self.list_stations.setMaximumHeight(95)
+        for st_name in self.all_stations:
+            item = QListWidgetItem(f"📡 {st_name}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if st_name in self.saved_excluded_stations else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, st_name)
+            self.list_stations.addItem(item)
+        box_st_lay.addWidget(self.list_stations)
+        layout.addWidget(self.box_stations)
+
         # 안내 가이드
         self.frame_guide = QFrame()
         self.frame_guide.setStyleSheet(
-            "background-color: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 6px; padding: 8px;"
+            "background-color: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 6px; padding: 6px;"
         )
         guide_lay = QVBoxLayout(self.frame_guide)
-        guide_lay.setContentsMargins(6, 6, 6, 6)
-        guide_lay.setSpacing(4)
+        guide_lay.setContentsMargins(6, 4, 6, 4)
+        guide_lay.setSpacing(2)
         
         lbl_guide_title = QLabel("<b>📐 Score Evaluation & Decision Rule</b>")
         lbl_guide_title.setStyleSheet("color: #212121; font-size: 11px;")
         guide_lay.addWidget(lbl_guide_title)
         
         formula_html = (
-            "<div style='font-size: 11px; color: #424242; line-height: 140%;'>"
+            "<div style='font-size: 10px; color: #424242; line-height: 130%;'>"
             "• <b>Total Score</b> = &Sigma; (<b>Weight</b> &times; <b>Normalized Score</b>) + <b>Hard Constraints</b><br>"
             "&nbsp;&nbsp;- <b>Fairness</b>: (-Pass Count &times; 15) + Target Bonus (+20) + Min Target Bonus (+50)<br>"
             "&nbsp;&nbsp;- <b>Elevation / Duration</b>: (Pass Value / Group Max) &times; 100% (Normalized 0~100)<br>"
             "&nbsp;&nbsp;- <b>Priority</b>: Max 100 - (Rank - 1) &times; 20 (Rank 1 = 100 pts)<br>"
             "&nbsp;&nbsp;- <b>Hard Penalty (-10,000)</b>: Applied if satellite exceeds its <code>Max Pass Limit</code>.<br>"
-            "<i>* The pass with highest Total Score in each conflict group is automatically selected.</i>"
+            "<i>* Excluded stations are completely skipped and set to unselected.</i>"
             "</div>"
         )
         lbl_guide_desc = QLabel(formula_html)
@@ -253,5 +277,11 @@ class ConflictSolverDialog(QDialog):
             except ValueError:
                 rank = 999
             sat_priorities[sat_name] = rank
+
+        excluded_stations = []
+        for i in range(self.list_stations.count()):
+            item = self.list_stations.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                excluded_stations.append(item.data(Qt.ItemDataRole.UserRole))
             
-        return weights, sat_priorities, self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets
+        return weights, sat_priorities, self.equalize_target_sats, self.min_pass_targets, self.max_pass_targets, excluded_stations

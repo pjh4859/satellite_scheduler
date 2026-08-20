@@ -44,6 +44,7 @@ class PassPredictTab(QWidget):
         
         self.auto_resolve_weights = None
         self.auto_resolve_priorities = None
+        self.auto_resolve_excluded_stations = []
         
         if not os.path.exists(self.pass_output_dir):
             os.makedirs(self.pass_output_dir)
@@ -421,6 +422,8 @@ class PassPredictTab(QWidget):
             sat_clean = p['satellite'].split('(')[0].strip()
             all_sats.add(sat_clean)
 
+        all_st_names = [st[0] for st in getattr(self.main_app, 'station_data', [])]
+
         dialog = ConflictSolverDialog(
             all_satellites=all_sats,
             equalize_target_sats=self.equalize_target_sats,
@@ -428,16 +431,19 @@ class PassPredictTab(QWidget):
             max_pass_targets=self.max_pass_targets,
             saved_weights=getattr(self, 'auto_resolve_weights', None),
             saved_priorities=getattr(self, 'auto_resolve_priorities', None),
+            all_stations=all_st_names,
+            saved_excluded_stations=getattr(self, 'auto_resolve_excluded_stations', []),
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            weights, sat_priorities, eq_targets, min_targets, max_targets = dialog.get_results()
+            weights, sat_priorities, eq_targets, min_targets, max_targets, excluded_stations = dialog.get_results()
 
             self.auto_resolve_weights = weights
             self.auto_resolve_priorities = sat_priorities
             self.equalize_target_sats = eq_targets
             self.min_pass_targets = min_targets
             self.max_pass_targets = max_targets
+            self.auto_resolve_excluded_stations = excluded_stations
             self.save_settings()
 
             resolved_passes = resolve_conflicts(
@@ -446,14 +452,16 @@ class PassPredictTab(QWidget):
                 sat_priorities=sat_priorities,
                 equalize_target_sats=self.equalize_target_sats,
                 min_pass_targets=self.min_pass_targets,
-                max_pass_targets=self.max_pass_targets
+                max_pass_targets=self.max_pass_targets,
+                excluded_stations=self.auto_resolve_excluded_stations
             )
             self.main_app.calculated_passes = resolved_passes
             self.populate_table()
 
+            ex_msg = f"\n\n🚫 Excluded Ground Stations:\n• {', '.join(excluded_stations)}" if excluded_stations else ""
             QMessageBox.information(
                 self, "Auto Resolution Complete", 
-                "Successfully resolved conflicts with saved weighted strategy!"
+                f"Successfully resolved conflicts with saved weighted strategy!{ex_msg}"
             )
 
     # --------------------------------------------------------------------------
@@ -619,7 +627,8 @@ class PassPredictTab(QWidget):
             "color_mode": self.color_mode,
             "display_tz": tz_manager.current_tz,
             "auto_resolve_weights": getattr(self, 'auto_resolve_weights', None),
-            "auto_resolve_priorities": getattr(self, 'auto_resolve_priorities', None)
+            "auto_resolve_priorities": getattr(self, 'auto_resolve_priorities', None),
+            "auto_resolve_excluded_stations": getattr(self, 'auto_resolve_excluded_stations', [])
         }
         config_manager.save_config(config_data)
 
@@ -652,13 +661,11 @@ class PassPredictTab(QWidget):
             restored_rules = []
             for r in raw_rules:
                 try:
-                    # 신형 포맷 (date, time 분리)
                     if "start_date" in r:
                         s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date()
                         e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date()
                         s_time = datetime.strptime(r["start_time"], "%H:%M:%S").time()
                         e_time = datetime.strptime(r["end_time"], "%H:%M:%S").time()
-                    # 이전 datetime 포맷 호환
                     else:
                         s_dt = datetime.strptime(r["start_dt"], "%Y-%m-%d %H:%M:%S")
                         e_dt = datetime.strptime(r["end_dt"], "%Y-%m-%d %H:%M:%S")
@@ -688,6 +695,7 @@ class PassPredictTab(QWidget):
 
             self.auto_resolve_weights = tab1_cfg.get("auto_resolve_weights", None)
             self.auto_resolve_priorities = tab1_cfg.get("auto_resolve_priorities", None)
+            self.auto_resolve_excluded_stations = tab1_cfg.get("auto_resolve_excluded_stations", [])
 
             saved_tle = set(tab1_cfg.get("selected_tle_files", []))
             for i in range(self.tle_file_list.count()):

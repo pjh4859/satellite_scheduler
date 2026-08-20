@@ -3,3 +3,4 @@ Daejeon, 36.35, 127.38, Y, Y
 Jeju, 33.50, 126.52, Y, Y
 Svalbard, 78.23, 15.49, N, Y
 King Sejong, -62.22, -58.78, N, Y
+Daejeon2, 36.35, 127.38, Y, N

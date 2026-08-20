@@ -209,12 +209,14 @@ class FinalSchedulerTab(QWidget):
             self.final_schedule_data = []
             max_lead_steps = self.spin_max_lead.value()
             
+            # 1. 지상국 기능(다운링크: 3번 인덱스, 커맨딩: 4번 인덱스) 안전 파싱
             station_configs = getattr(self.main_app, 'station_data', [])
             st_caps = {}
             for st in station_configs:
-                st_name = st[0]
-                is_down = (st[3].upper() == 'Y') if len(st) > 3 else True
-                is_cmd = (st[4].upper() == 'Y') if len(st) > 4 else True
+                st_name = str(st[0]).strip()
+                # st[3]: Downlink(Y/N), st[4]: Command(Y/N)
+                is_down = (str(st[3]).strip().upper() == 'Y') if len(st) > 3 else True
+                is_cmd = (str(st[4]).strip().upper() == 'Y') if len(st) > 4 else True
                 st_caps[st_name] = {'cmd': is_cmd, 'down': is_down}
 
             sat_plans = {}
@@ -240,9 +242,16 @@ class FinalSchedulerTab(QWidget):
                 try: min_dur = float(raw_dur)
                 except Exception: min_dur = 0.0
                 
-                req_cap = str(act.get("req_cap", act.get("required_cap", act.get("x_band_req", "NONE")))).strip().upper()
-                if req_cap == 'Y': req_cap = 'DOWN'
-                elif req_cap == 'N': req_cap = 'NONE'
+                # 💡 요구 기능(req_cap) 정규화: CMD, DOWN, BOTH, NONE 정밀 분류
+                raw_req = str(act.get("req_cap", act.get("required_cap", act.get("required_capability", "NONE")))).strip().upper()
+                if raw_req in ['CMD', 'COMMAND', 'TC', 'UPLINK', 'CMD_ONLY', 'TX']:
+                    req_cap = 'CMD'
+                elif raw_req in ['DOWN', 'DOWNLOAD', 'TM', 'DOWNLINK', 'X_BAND', 'RX']:
+                    req_cap = 'DOWN'
+                elif raw_req in ['BOTH', 'ALL', 'CMD+DOWN', 'DOWN+CMD', 'FULL', 'TX/RX']:
+                    req_cap = 'BOTH'
+                else:
+                    req_cap = 'NONE'
 
                 pre_req = str(act.get("pre_req_main", act.get("pre_activity_sequence_id", "NONE"))).strip()
 
@@ -266,6 +275,8 @@ class FinalSchedulerTab(QWidget):
                 
                 p_dur = float(p.get("duration_sec", p.get("duration", 0)))
                 p_el = float(p.get("max_elevation_deg", p.get("max_el", 0)))
+                
+                # 지상국 능력 조회
                 st_info = st_caps.get(st_name, {'cmd': True, 'down': True})
 
                 matched_plan_key = None
@@ -301,29 +312,40 @@ class FinalSchedulerTab(QWidget):
                 next_task = plan_list[curr_step]
                 reject_reasons = []
 
+                # 1) 최소 고도각 검사
                 if p_el < next_task["min_el"]:
                     reject_reasons.append(f"El Low ({p_el}° < {next_task['min_el']}°)")
 
+                # 2) 최소 가시 시간 검사
                 if p_dur < next_task["min_dur"]:
                     reject_reasons.append(f"Dur Short ({p_dur}s < {next_task['min_dur']}s)")
 
+                # 3) 지상국 안테나 기능(CMD / DOWN) 제약 조건 검사
                 req = next_task["req_cap"]
                 if req == 'CMD' and not st_info['cmd']:
                     reject_reasons.append(f"GS {st_name} No CMD")
                 elif req == 'DOWN' and not st_info['down']:
                     reject_reasons.append(f"GS {st_name} No DOWN")
-                elif req == 'BOTH' and not (st_info['cmd'] and st_info['down']):
-                    reject_reasons.append(f"GS {st_name} No BOTH")
+                elif req == 'BOTH':
+                    if not st_info['cmd'] and not st_info['down']:
+                        reject_reasons.append(f"GS {st_name} No CMD/DOWN")
+                    elif not st_info['cmd']:
+                        reject_reasons.append(f"GS {st_name} No CMD")
+                    elif not st_info['down']:
+                        reject_reasons.append(f"GS {st_name} No DOWN")
 
+                # 4) 선행 작업(Pre-requisite) 완료 여부 검사
                 pre_req = next_task["pre_req_main"].strip().upper()
                 completed_upper = {m.upper() for m in sat_completed_mains[matched_plan_key]}
                 if pre_req not in ["NONE", "NULL", ""] and pre_req not in completed_upper:
                     reject_reasons.append(f"Pre-req '{next_task['pre_req_main']}' Not Met")
 
+                # 5) 위성 간 진도 격차 제한 검사
                 min_other_prog = min(sat_progress.values()) if sat_progress else 0
                 if ((curr_step + 1) - min_other_prog) > max_lead_steps:
                     reject_reasons.append(f"Step Lock (Lead > {max_lead_steps})")
 
+                # 할당(Allocated) 또는 통과(Bypassed) 판정
                 if not reject_reasons:
                     sub_str = f" ({next_task['sub']})" if next_task['sub'] else ""
                     assigned_text = f"[{next_task['sequence_id']}] {next_task['main']}{sub_str}"

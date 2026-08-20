@@ -1,15 +1,21 @@
 {
     "tab1": {
         "start_time_utc": "2026-10-13 13:53:43",
-        "end_time_utc": "2026-10-25 13:53:43",
+        "end_time_utc": "2026-10-17 13:53:43",
         "selected_tle_files": [
-            "NEONSAT-2.tle"
+            "NEONSAT-1.tle",
+            "NEONSAT-1A.tle",
+            "NEONSAT-2.tle",
+            "NEONSAT-3.tle",
+            "NEONSAT-4.tle",
+            "SPACEEYE-T1.tle"
         ],
         "selected_gs_items": [
             "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y]",
             "Jeju (Lat: 33.5, Lon: 126.52) [Down:Y / Cmd:Y]",
             "Svalbard (Lat: 78.23, Lon: 15.49) [Down:N / Cmd:Y]",
-            "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y]"
+            "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y]",
+            "Daejeon2 (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:N]"
         ],
         "min_el": 5,
         "min_dur": 300,
@@ -56,11 +62,11 @@
         ],
         "use_equalize": true,
         "equalize_target_sats": [
-            "NEONSAT-1",
             "SPACEEYE-T1",
-            "NEONSAT-2",
+            "NEONSAT-1A",
             "NEONSAT-3",
-            "NEONSAT-1A"
+            "NEONSAT-2",
+            "NEONSAT-1"
         ],
         "min_pass_targets": {
             "NEONSAT-1": 1,
@@ -89,7 +95,15 @@
             "weight_priority": 50
         },
         "auto_resolve_priorities": {
-            "NEONSAT-2": 3
-        }
+            "NEONSAT-1": 1,
+            "NEONSAT-1A": 2,
+            "NEONSAT-2": 3,
+            "NEONSAT-3": 4,
+            "NEONSAT-4": 5,
+            "SPACEEYE-T1": 6
+        },
+        "auto_resolve_excluded_stations": [
+            "Daejeon2"
+        ]
     }
 }

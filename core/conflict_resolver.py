@@ -1,13 +1,9 @@
 def resolve_conflicts(passes, weights=None, sat_priorities=None, 
-                      equalize_target_sats=None, min_pass_targets=None, max_pass_targets=None):
+                      equalize_target_sats=None, min_pass_targets=None, max_pass_targets=None,
+                      excluded_stations=None):
     """
     Weighted Multi-Criteria Conflict Resolution Engine
-    - weights: dict {
-        'use_fairness': bool, 'weight_fairness': int,
-        'use_elevation': bool, 'weight_elevation': int,
-        'use_duration': bool, 'weight_duration': int,
-        'use_priority': bool, 'weight_priority': int
-      }
+    - excluded_stations: list or set of station names to exclude from auto-resolution
     """
     if not passes:
         return passes
@@ -21,6 +17,7 @@ def resolve_conflicts(passes, weights=None, sat_priorities=None,
     sat_priorities = sat_priorities or {}
     min_pass_targets = min_pass_targets or {}
     max_pass_targets = max_pass_targets or {}
+    excluded_set = set(excluded_stations or [])
 
     sat_selected_counts = {}
     for p in passes:
@@ -32,8 +29,14 @@ def resolve_conflicts(passes, weights=None, sat_priorities=None,
     non_conflict_indices = []
 
     for idx, p in enumerate(passes):
+        st_name = str(p.get('station', 'UNKNOWN')).split('(')[0].strip()
+        
+        # 💡 제외 대상 지상국인 경우 충돌 분배 연산에서 배제하고 체크 해제
+        if st_name in excluded_set:
+            passes[idx]['selected'] = False
+            continue
+
         grp_id = p.get('conflict_group')
-        st_name = p.get('station', 'UNKNOWN')
         if grp_id is not None:
             key = (st_name, grp_id)
             if key not in groups:
