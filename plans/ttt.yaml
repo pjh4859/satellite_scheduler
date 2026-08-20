@@ -1,5 +1,5 @@
-generation_timestamp: '2026-08-20T12:37:16.562064+00:00'
-total_constraints_count: 20
+generation_timestamp: '2026-08-20T13:30:09.217786+00:00'
+total_constraints_count: 21
 mission_constraints:
 - sat_id: NEONSAT2
   main: First Contact
@@ -84,7 +84,7 @@ mission_constraints:
   min_el: 10.0
   req_cap: CMD
   min_dur: 180.0
-  pre_req_main: 3차 Cal Maneuver
+  pre_req_main: NONE
   sequence_id: 9
 - sat_id: NEONSAT2
   main: 1차 별촬영
@@ -95,6 +95,15 @@ mission_constraints:
   min_dur: 360.0
   pre_req_main: FCS Parameter Update
   sequence_id: 10
+- sat_id: NEONSAT2
+  main: 추력기 시험
+  sub: 추력기 on
+  remark: ''
+  min_el: 20.0
+  req_cap: CMD
+  min_dur: 360.0
+  pre_req_main: NONE
+  sequence_id: 11
 - sat_id: NEONSAT-1A
   main: First Contact
   sub: TM 확인 / Panel 전개 / TLE update
