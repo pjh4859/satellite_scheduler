@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import copy_metadata
+
+datas = [('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\assets', 'assets'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\tle', 'tle'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\stations', 'stations'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\plans', 'plans'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\pass_output', 'pass_output'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\final_output', 'final_output')]
+datas += collect_data_files('cartopy')
+datas += copy_metadata('skyfield')
 
 
 a = Analysis(
     ['F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\assets', 'assets'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\tle', 'tle'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\stations', 'stations'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\plans', 'plans'), ('F:\\MINE\\Code\\python\\LEOP_pass_schedule_gemini\\pass_output', 'pass_output')],
+    datas=datas,
     hiddenimports=['PyQt6', 'cartopy', 'matplotlib', 'matplotlib.backends.backend_qtagg', 'skyfield', 'numpy', 'openpyxl', 'xlwings', 'yaml'],
     hookspath=[],
     hooksconfig={},
