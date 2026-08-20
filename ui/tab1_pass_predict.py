@@ -1044,11 +1044,13 @@ class PassPredictTab(QWidget):
         if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV Schedule", self.pass_output_dir, "CSV Files (*.csv)")
         if path: export_to_csv(path, self.main_app.calculated_passes)
-
+    
     def click_export_yaml(self):
         if not self.main_app.calculated_passes: return
         path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", self.pass_output_dir, "YAML Files (*.yaml)")
-        if path: export_to_yaml(path, self.main_app.calculated_passes)
+        if path:
+            # 💡 선택된 패스와 함께 전체 계산 패스 풀을 넘겨 Tab 3 스왑에 활용
+            export_to_yaml(path, self.main_app.calculated_passes, all_passes=getattr(self.main_app, 'calculated_passes', None))
 
     def set_all_checkboxes(self, check_state):
         if not self.main_app.calculated_passes: return

@@ -63,10 +63,10 @@
         "use_equalize": true,
         "equalize_target_sats": [
             "SPACEEYE-T1",
-            "NEONSAT-1A",
+            "NEONSAT-1",
             "NEONSAT-3",
             "NEONSAT-2",
-            "NEONSAT-1"
+            "NEONSAT-1A"
         ],
         "min_pass_targets": {
             "NEONSAT-1": 1,

@@ -49,12 +49,13 @@ def export_to_csv(file_path, passes_list):
             ])
 
 
-def export_to_yaml(file_path, passes_list):
+def export_to_yaml(file_path, passes_list, all_passes=None):
     """
     Tab 1 패스 예측 스케줄을 YAML 파일로 내보내기
     
     [기능 설명]
     - 선택된 패스 목록을 생성 시각 타임스탬프와 함께 정돈된 YAML 규격 문서로 출력합니다.
+    - all_passes가 제공될 경우 탈락/충돌 패스를 포함한 전체 후보 풀을 'all_candidate_passes'로 함께 직렬화합니다.
     """
     selected_passes = [p for p in passes_list if p.get('selected', False)]
     formatted_list = []
@@ -62,7 +63,6 @@ def export_to_yaml(file_path, passes_list):
         aos_str = p['aos'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['aos'], datetime) else str(p['aos'])
         los_str = p['los'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['los'], datetime) else str(p['los'])
         
-        # 수치형 변환 예외 방지
         try: pass_no_val = int(p.get('pass_no', 1))
         except (ValueError, TypeError): pass_no_val = 1
         
@@ -88,6 +88,33 @@ def export_to_yaml(file_path, passes_list):
         "total_passes_count": len(formatted_list),
         "predicted_passes": formatted_list
     }
+
+    # 전체 패스 풀이 존재할 경우 함께 직렬화 (Tab 3 Cross-Satellite Swap에 활용)
+    if all_passes:
+        formatted_all = []
+        for p in all_passes:
+            aos_str = p['aos'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['aos'], datetime) else str(p['aos'])
+            los_str = p['los'].strftime('%Y-%m-%d %H:%M:%S') if isinstance(p['los'], datetime) else str(p['los'])
+            try: pass_no_val = int(p.get('pass_no', 1))
+            except (ValueError, TypeError): pass_no_val = 1
+            try: dur_val = float(p.get('duration', 0.0))
+            except (ValueError, TypeError): dur_val = 0.0
+            try: el_val = float(p.get('max_el', 0.0))
+            except (ValueError, TypeError): el_val = 0.0
+
+            formatted_all.append({
+                "station": p['station'], 
+                "satellite": p['satellite'], 
+                "pass_no": pass_no_val,
+                "aos": aos_str, 
+                "los": los_str,
+                "duration_sec": dur_val, 
+                "max_elevation_deg": el_val, 
+                "selected": p.get('selected', False),
+                "status": p.get('status', 'Normal')
+            })
+        payload["all_candidate_passes"] = formatted_all
+
     with open(file_path, "w", encoding="utf-8") as f:
         yaml.dump(payload, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
@@ -109,7 +136,6 @@ def export_to_excel_with_color(file_path, passes_list):
         headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status"]
         ws.append(headers)
         
-        # 헤더 디자인 (다크 그레이 배경, 흰색 굵은 폰트)
         header_fill = PatternFill(start_color="333333", end_color="333333", fill_type="solid")
         header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
         for col_num in range(1, len(headers) + 1):
@@ -131,7 +157,6 @@ def export_to_excel_with_color(file_path, passes_list):
             ]
             ws.append(row_data)
             
-            # 지상국별 고유 파스텔 색상 적용
             st_key = p['station'].split("(")[0].strip()
             color_hex, _ = color_manager.get_station_colors(st_key)
             row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
@@ -141,7 +166,6 @@ def export_to_excel_with_color(file_path, passes_list):
                 cell.fill = row_fill
                 cell.font = data_font
                 
-        # 컬럼 너비 자동 맞춤
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = col[0].column_letter
@@ -170,7 +194,7 @@ def export_constraints_to_csv(file_path, extracted_plan_list, headers_labels):
                 data.get("sat_id", data.get("satellite", "")),
                 data.get("main", data.get("activity", "")),
                 data.get("sub", ""),
-                data.get("remark", data.get("remarks", data.get("note", ""))),  # 👈 Remark 추가
+                data.get("remark", data.get("remarks", data.get("note", ""))),
                 data.get("min_el", ""),
                 data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
                 data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
@@ -204,7 +228,7 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
                 data.get("sat_id", data.get("satellite", "")),
                 data.get("main", data.get("activity", "")),
                 data.get("sub", ""),
-                data.get("remark", data.get("remarks", data.get("note", ""))),  # 👈 Remark 추가
+                data.get("remark", data.get("remarks", data.get("note", ""))),
                 data.get("min_el", ""),
                 data.get("req_cap", data.get("required_cap", data.get("x_band_req", ""))),
                 data.get("min_dur", data.get("min_duration", data.get("min_pass_contact", ""))),
@@ -213,7 +237,6 @@ def export_constraints_to_excel_color(file_path, extracted_plan_list, headers_la
             ]
             ws.append(row_values)
             
-            # 위성별 파스텔 색상 매핑
             sat_raw = str(data.get("sat_id", data.get("satellite", ""))).strip()
             sat_clean = normalize_sat_name(sat_raw)
             color_hex, _ = color_manager.get_colors(sat_clean)
@@ -251,17 +274,13 @@ def export_final_schedule_to_csv(file_path, final_data):
             writer.writerow([
                 item["station"], item["satellite"], item["pass_no"],
                 item["aos"], item["los"], item["duration"], item["max_el"],
-                item["status"], item["activity"], item.get("remark", "")  # 👈 Remark 추가
+                item["status"], item["activity"], item.get("remark", "")
             ])
 
 
 def export_final_schedule_to_excel(file_path, final_data, color_mode):
     """
     Tab 3 최종 통합 스케줄을 Excel 파일로 내보내기 (Remark 열 추가)
-    
-    [기능 설명]
-    - color_mode="STATION": 지상국 기준으로 파스텔 색상을 다르게 채워 구분합니다.
-    - color_mode="SATELLITE": 위성 기준으로 파스텔 색상을 다르게 채워 구분합니다.
     """
     try:
         from core.color_manager import color_manager
@@ -273,7 +292,6 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
         headers = ["Station", "Satellite", "Pass_No", "AOS(UTC)", "LOS(UTC)", "Duration_Sec", "Max_Elevation", "Status", "Mission Activity", "Remark"]
         ws.append(headers)
         
-        # 네이비 파란색 헤더 디자인
         header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
         header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
         for col_idx in range(1, len(headers) + 1):
@@ -287,10 +305,9 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
             ws.append([
                 item["station"], item["satellite"], item["pass_no"],
                 item["aos"], item["los"], item["duration"], item["max_el"],
-                item["status"], item["activity"], item.get("remark", "")  # 👈 Remark 추가
+                item["status"], item["activity"], item.get("remark", "")
             ])
             
-            # 모드별(지상국 vs 위성) 정확한 파스텔 색상 매핑
             if color_mode == "STATION":
                 st_key = str(item["station"]).split("(")[0].strip()
                 color_hex, _ = color_manager.get_station_colors(st_key)
@@ -305,7 +322,6 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
                 cell.fill = row_fill
                 cell.font = data_font
                 
-        # 컬럼 폭 자동 맞춤
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = col[0].column_letter

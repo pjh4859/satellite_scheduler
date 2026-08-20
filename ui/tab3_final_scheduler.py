@@ -15,15 +15,16 @@ from core.plan_parser import normalize_sat_name
 
 
 # ==============================================================================
-# [수동 재할당 팝업] 패스 더블클릭 시 수동 액티비티 선택 다이얼로그
+# [수동 재할당 팝업] 패스 더블클릭 시 수동 위성/액티비티 선택 다이얼로그
 # ==============================================================================
 class ManualActivityDialog(QDialog):
-    def __init__(self, pass_item, candidate_tasks, current_activity, parent=None):
+    def __init__(self, pass_item, all_sat_plans, current_activity, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🛠️ Manual Activity Reassignment")
-        self.resize(520, 400)
+        self.setWindowTitle("🛠️ Manual Activity & Satellite Reassignment")
+        self.resize(560, 440)
         self.pass_item = pass_item
-        self.candidate_tasks = candidate_tasks
+        self.all_sat_plans = all_sat_plans
+        self.selected_sat = pass_item.get("satellite", "")
         self.selected_activity = current_activity
         self.selected_status = pass_item.get("status", "Bypassed")
         self.selected_remark = pass_item.get("remark", "")
@@ -32,32 +33,46 @@ class ManualActivityDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
         p = self.pass_item
-        info_text = (f"<b>🛰️ {p.get('satellite')} @ {p.get('station')}</b><br>"
+        info_text = (f"<b>🛰️ Current Pass: {p.get('satellite')} @ {p.get('station')}</b><br>"
                      f"AOS: {p.get('aos')} | LOS: {p.get('los')}<br>"
                      f"Duration: {p.get('duration')}s | Max El: {p.get('max_el')}°")
         layout.addWidget(QLabel(info_text))
-        layout.addWidget(QLabel("<b>Select Activity to assign to this pass:</b>"))
 
+        sat_lay = QHBoxLayout()
+        sat_lay.addWidget(QLabel("<b>Target Satellite:</b>"))
+        self.combo_sat = QComboBox()
+        norm_curr_sat = normalize_sat_name(self.selected_sat)
+        sat_keys = list(self.all_sat_plans.keys())
+        self.combo_sat.addItems(sat_keys)
+        if norm_curr_sat in sat_keys:
+            self.combo_sat.setCurrentText(norm_curr_sat)
+        self.combo_sat.currentTextChanged.connect(self.populate_task_list)
+        sat_lay.addWidget(self.combo_sat)
+        layout.addLayout(sat_lay)
+
+        layout.addWidget(QLabel("<b>Select Activity to assign:</b>"))
         self.list_widget = QListWidget()
-        
-        # 1. 시스템 기본 옵션
-        self.list_widget.addItem(QListWidgetItem("🚫 [Bypassed] Skip / No Activity"))
-        self.list_widget.addItem(QListWidgetItem("📡 [Standby] Routine TM Downlink / Health Check"))
-        
-        # 2. 해당 위성의 후보 태스크 목록
-        for task in self.candidate_tasks:
-            sub_str = f" ({task['sub']})" if task.get('sub') else ""
-            item_str = f"[{task['sequence_id']}] {task['main']}{sub_str} [Req: {task['req_cap']}, El≥{task['min_el']}°, Dur≥{task['min_dur']}s]"
-            item = QListWidgetItem(item_str)
-            item.setData(Qt.ItemDataRole.UserRole, task)
-            self.list_widget.addItem(item)
-            
         layout.addWidget(self.list_widget)
+
+        self.populate_task_list(self.combo_sat.currentText())
 
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         btn_box.accepted.connect(self.on_accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+
+    def populate_task_list(self, sat_name):
+        self.list_widget.clear()
+        self.list_widget.addItem(QListWidgetItem("🚫 [Bypassed] Skip / No Activity"))
+        self.list_widget.addItem(QListWidgetItem("📡 [Standby] Routine TM Downlink / Health Check"))
+        
+        tasks = self.all_sat_plans.get(sat_name, [])
+        for task in tasks:
+            sub_str = f" ({task['sub']})" if task.get('sub') else ""
+            item_str = f"[{task['sequence_id']}] {task['main']}{sub_str} [Req: {task['req_cap']}, El≥{task['min_el']}°, Dur≥{task['min_dur']}s]"
+            item = QListWidgetItem(item_str)
+            item.setData(Qt.ItemDataRole.UserRole, task)
+            self.list_widget.addItem(item)
 
     def on_accept(self):
         curr_item = self.list_widget.currentItem()
@@ -65,6 +80,7 @@ class ManualActivityDialog(QDialog):
             self.reject()
             return
         
+        self.selected_sat = self.combo_sat.currentText()
         task_data = curr_item.data(Qt.ItemDataRole.UserRole)
         if task_data:
             sub_str = f" ({task_data['sub']})" if task_data.get('sub') else ""
@@ -84,23 +100,13 @@ class ManualActivityDialog(QDialog):
         self.accept()
 
     def get_result(self):
-        return self.selected_status, self.selected_activity, self.selected_remark
+        return self.selected_sat, self.selected_status, self.selected_activity, self.selected_remark
 
 
 # ==============================================================================
 # [메인 탭] Tab 3: LEOP 시퀀스 및 제약 조건 기반 최종 미션 통합 스케줄러
 # ==============================================================================
 class FinalSchedulerTab(QWidget):
-    """
-    Tab 3 메인 UI 및 스케줄링 컴파일 엔진 클래스
-    
-    [기능 설명]
-    - Tab 1의 패스 예측 결과(.yaml)와 Tab 2의 미션 제약 조건(.yaml)을 로드합니다.
-    - 안테나 기능(CMD/DOWN), 최소 고도각, 최소 교신 시간, 선행 작업(Pre-req), 
-      위성 간 단계 격차 제한(Max Step Lead)을 검증하여 최종 미션을 할당(Allocated/Bypassed/Idle/Standby)합니다.
-    - Strict Sequential, Look-Ahead Pull, Routine Standby Fill의 3가지 스케줄링 전략을 지원합니다.
-    - 테이블 셀 더블클릭을 통한 수동 오버라이드 및 10개 컬럼 파스텔톤 그리드를 제공합니다.
-    """
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -108,12 +114,12 @@ class FinalSchedulerTab(QWidget):
         self.pass_output_dir = "pass_output"
         self.final_output_dir = "final_output"
         
-        # 기본 디렉토리 자동 생성
         if not os.path.exists(self.plans_dir): os.makedirs(self.plans_dir)
         if not os.path.exists(self.pass_output_dir): os.makedirs(self.pass_output_dir)
         if not os.path.exists(self.final_output_dir): os.makedirs(self.final_output_dir)
         
         self.raw_pass_data = None
+        self.all_candidate_passes = []
         self.raw_constraint_data = None
         self.final_schedule_data = []
         self.sat_plans_cached = {}
@@ -123,9 +129,7 @@ class FinalSchedulerTab(QWidget):
         layout = QVBoxLayout(self)
         top_ctrl = QHBoxLayout()
         
-        # ----------------------------------------------------------------------
-        # 1. 상단 컨트롤 패널 (파일 로드, Max Lead 설정, 전략 선택, 색상 모드)
-        # ----------------------------------------------------------------------
+        # 1. 상단 컨트롤 패널
         self.btn_load_pass = QPushButton("📂 Load Tab1 Passes (.yaml)")
         self.btn_load_pass.setStyleSheet("font-weight: bold; padding: 5px;")
         self.btn_load_pass.clicked.connect(self.click_load_pass_yaml)
@@ -157,19 +161,26 @@ class FinalSchedulerTab(QWidget):
 
         top_ctrl.addSpacing(10)
 
-        # 💡 할당 전략 선택 콤보박스
+        # 💡 스케줄링 전략 선택 콤보박스 (상세 설명 툴팁 내장)
         top_ctrl.addWidget(QLabel("<b>Strategy:</b>"))
         self.combo_strategy = QComboBox()
         self.combo_strategy.addItems([
             "Strict Sequential (Default)",
             "Look-Ahead & Fill (Pull Ahead)",
-            "Fill with Routine Standby (Keep Order)"
+            "Fill with Routine Standby (Keep Order)",
+            "🌐 Cross-Satellite Swap (Multi-Sat Fallback)"
         ])
         self.combo_strategy.setToolTip(
             "• Strict Sequential: 순서를 엄격히 준수하며 조건 불만족 시 Pass 스킵 (Bypassed)\n"
-            "• Look-Ahead & Fill: Block 시 선행조건을 만족하는 뒷순번 유효작업 당겨오기 (진도 단축)\n"
-            "• Fill with Routine Standby: 순번은 그대로 대기시키고 유휴 패스에 루틴 TM 점검 채우기"
+            "• Look-Ahead & Fill: Block 시 동일 위성의 선행조건 충족 뒷번호 작업 당겨오기\n"
+            "• Fill with Routine Standby: 순서 유지, 유휴 패스에 루틴 TM 점검 채우기\n"
+            "• Cross-Satellite Swap:\n"
+            "   [1단계] 본래 작업 시도\n"
+            "   [2단계] Block 시 겹치는 타 위성 작업으로 패스 스왑\n"
+            "   [3단계] 스왑 불가 시 동일 위성 작업 당겨오기 (Look-Ahead)\n"
+            "   [4단계] 모두 불가 시 Bypassed 유지"
         )
+        self.combo_strategy.currentIndexChanged.connect(self.update_strategy_guide_label)
         top_ctrl.addWidget(self.combo_strategy)
         
         self.lbl_status = QLabel("❌ Files Missing")
@@ -200,10 +211,14 @@ class FinalSchedulerTab(QWidget):
         
         top_ctrl.addStretch()
         layout.addLayout(top_ctrl)
+
+        # 💡 상단 전략 가이드 보조 라벨
+        self.lbl_strategy_guide = QLabel()
+        self.lbl_strategy_guide.setStyleSheet("color: #555555; font-size: 11px; margin-left: 5px; margin-bottom: 2px;")
+        layout.addWidget(self.lbl_strategy_guide)
+        self.update_strategy_guide_label(self.combo_strategy.currentIndex())
         
-        # ----------------------------------------------------------------------
-        # 2. 중앙 최종 스케줄 그리드 테이블 (더블클릭 수동 재할당 지원)
-        # ----------------------------------------------------------------------
+        # 2. 그리드 테이블
         self.final_table = QTableWidget()
         self.final_table.setColumnCount(10)
         self.final_table.setHorizontalHeaderLabels([
@@ -219,9 +234,7 @@ class FinalSchedulerTab(QWidget):
         self.final_table.cellDoubleClicked.connect(self.handle_cell_double_clicked)
         layout.addWidget(self.final_table)
         
-        # ----------------------------------------------------------------------
-        # 3. 하단 컨트롤 패널 (CSV / Excel 저장)
-        # ----------------------------------------------------------------------
+        # 3. 하단 컨트롤 패널
         bottom_ctrl = QHBoxLayout()
         bottom_ctrl.addWidget(QLabel("<b>Export Options:</b>"))
         
@@ -241,18 +254,20 @@ class FinalSchedulerTab(QWidget):
         bottom_ctrl.addStretch()
         layout.addLayout(bottom_ctrl)
 
-    # --------------------------------------------------------------------------
-    # 파일 탐색기 열기 유틸리티
-    # --------------------------------------------------------------------------
+    def update_strategy_guide_label(self, idx):
+        guides = {
+            0: "ℹ️ <b>Strict Sequential</b>: 순서를 엄격히 준수하며 조건 미달 시 패스를 스킵(Bypassed)합니다.",
+            1: "ℹ️ <b>Look-Ahead & Fill</b>: 차례 작업이 Block되면 선행조건이 완료된 뒷순번 유효 작업을 먼저 당겨와 일정을 단축합니다.",
+            2: "ℹ️ <b>Routine Standby Fill</b>: 원래 시퀀스 순번은 그대로 대기시키고, 유휴 패스에 루틴 상태점검(TM)을 채워 낭비를 방지합니다.",
+            3: "ℹ️ <b>Cross-Satellite Swap Flow</b>: ①본래 작업 시도 ➔ ②Block 시 <b>타 위성 스왑</b> ➔ ③불가 시 <b>동일 위성 당겨오기</b> ➔ ④최후 Bypassed"
+        }
+        self.lbl_strategy_guide.setText(guides.get(idx, ""))
+
     def open_local_folder(self, folder_path):
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+        if not os.path.exists(folder_path): os.makedirs(folder_path)
         abs_path = os.path.abspath(folder_path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
 
-    # --------------------------------------------------------------------------
-    # YAML 데이터 로드 및 준비 상태 업데이트
-    # --------------------------------------------------------------------------
     def click_load_pass_yaml(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Tab1 Predicted Passes YAML", self.pass_output_dir, "YAML Files (*.yaml)")
         if not path: return
@@ -260,6 +275,7 @@ class FinalSchedulerTab(QWidget):
             with open(path, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f) or {}
             self.raw_pass_data = content.get("predicted_passes", [])
+            self.all_candidate_passes = content.get("all_candidate_passes", self.raw_pass_data)
             self.btn_load_pass.setText("✅ Tab1 Passes Loaded")
             self.update_input_readiness()
         except Exception as e:
@@ -291,9 +307,6 @@ class FinalSchedulerTab(QWidget):
             self.lbl_status.setStyleSheet("color: #D32F2F; font-weight: bold; margin-left: 10px; margin-right: 10px;")
             self.btn_generate_final.setEnabled(False)
 
-    # --------------------------------------------------------------------------
-    # 개별 태스크 제약 조건 검증 헬퍼
-    # --------------------------------------------------------------------------
     def _evaluate_task_constraints(self, task, p_el, p_dur, st_info, st_name, completed_mains, curr_step, min_other_prog, max_lead_steps):
         reject_reasons = []
 
@@ -327,7 +340,7 @@ class FinalSchedulerTab(QWidget):
         return reject_reasons
 
     # --------------------------------------------------------------------------
-    # [핵심 엔진] LEOP 미션 시퀀스 및 다중 전략 기반 스케줄러
+    # [핵심 엔진] LEOP 미션 스케줄러 (Swarm Cross-Satellite Swap 지원)
     # --------------------------------------------------------------------------
     def click_generate_schedule(self):
         if not self.raw_pass_data or self.raw_constraint_data is None: return
@@ -335,18 +348,18 @@ class FinalSchedulerTab(QWidget):
         try:
             self.final_schedule_data = []
             max_lead_steps = self.spin_max_lead.value()
-            strategy_idx = self.combo_strategy.currentIndex()  # 0: Strict, 1: Look-Ahead, 2: Standby Fill
+            strategy_idx = self.combo_strategy.currentIndex()  # 0: Strict, 1: Look-Ahead, 2: Standby Fill, 3: Cross-Sat Swap
             
-            # 1. 지상국 기능(Downlink: 3번, Command: 4번) 파싱
+            # 1. 지상국 기능 파싱 (3: Downlink, 4: Command)[cite: 7]
             station_configs = getattr(self.main_app, 'station_data', [])
             st_caps = {}
             for st in station_configs:
                 st_name = str(st[0]).strip()
-                is_down = (str(st[3]).strip().upper() == 'Y') if len(st) > 3 else True
-                is_cmd = (str(st[4]).strip().upper() == 'Y') if len(st) > 4 else True
+                is_down = (str(st[3]).strip().upper() == 'Y') if len(st) > 3 else True[cite: 7]
+                is_cmd = (str(st[4]).strip().upper() == 'Y') if len(st) > 4 else True[cite: 7]
                 st_caps[st_name] = {'cmd': is_cmd, 'down': is_down}
 
-            # 2. 미션 플랜 파싱 및 정규화
+            # 2. 미션 제약조건 파싱
             sat_plans = {}
             for act in self.raw_constraint_data:
                 raw_sat = act.get("sat_id", act.get("satellite", ""))
@@ -392,7 +405,6 @@ class FinalSchedulerTab(QWidget):
                 sat_plans[norm_sat].sort(key=lambda x: x["sequence_id"])
 
             self.sat_plans_cached = sat_plans
-
             sat_completed_mains = {norm_sat: set() for norm_sat in sat_plans.keys()}
             sorted_passes = sorted(self.raw_pass_data, key=lambda x: x.get('aos', ''))
 
@@ -403,6 +415,8 @@ class FinalSchedulerTab(QWidget):
                 
                 p_dur = float(p.get("duration_sec", p.get("duration", 0)))
                 p_el = float(p.get("max_elevation_deg", p.get("max_el", 0)))
+                p_aos_str = p.get("aos", "")
+                p_los_str = p.get("los", "")
                 st_info = st_caps.get(st_name, {'cmd': True, 'down': True})
 
                 matched_plan_key = None
@@ -417,8 +431,8 @@ class FinalSchedulerTab(QWidget):
                 if not matched_plan_key:
                     self.final_schedule_data.append({
                         "station": p.get("station", ""), "satellite": p_sat_full,
-                        "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
-                        "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
+                        "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p_aos_str,
+                        "los": p_los_str, "duration": p_dur, "max_el": p_el,
                         "status": p.get("status", "Normal"), "activity": "N/A (No Plan)", "remark": "",
                         "raw_pass": p
                     })
@@ -430,8 +444,8 @@ class FinalSchedulerTab(QWidget):
                 if not uncompleted_tasks:
                     self.final_schedule_data.append({
                         "station": p.get("station", ""), "satellite": p_sat_full,
-                        "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
-                        "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
+                        "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p_aos_str,
+                        "los": p_los_str, "duration": p_dur, "max_el": p_el,
                         "status": "Idle", "activity": "Standby / Idle Operations", "remark": "",
                         "raw_pass": p
                     })
@@ -444,8 +458,10 @@ class FinalSchedulerTab(QWidget):
                 assigned_status = "Bypassed"
                 assigned_activity = ""
                 assigned_remark = ""
+                assigned_sat = p_sat_full
+                assigned_pass_no = f"Pass {p.get('pass_no', '')}"
 
-                # --- Mode 0: Strict Sequential (기본 순차 검사) ---
+                # --- 1. Mode 0: Strict Sequential ---
                 if strategy_idx == 0:
                     primary_task = uncompleted_tasks[0]
                     reject_reasons = self._evaluate_task_constraints(
@@ -465,7 +481,7 @@ class FinalSchedulerTab(QWidget):
                         assigned_status = "Bypassed"
                         assigned_remark = primary_task.get("remark", "")
 
-                # --- Mode 1: Look-Ahead & Fill (선행조건 충족 시 유효작업 당겨오기) ---
+                # --- 2. Mode 1: Look-Ahead & Fill (Same Sat) ---
                 elif strategy_idx == 1:
                     primary_task = uncompleted_tasks[0]
                     first_reasons = []
@@ -494,7 +510,7 @@ class FinalSchedulerTab(QWidget):
                         assigned_status = "Bypassed"
                         assigned_remark = primary_task.get("remark", "")
 
-                # --- Mode 2: Fill with Routine Standby (순번 유지 + 유휴 패스 TM 채우기) ---
+                # --- 3. Mode 2: Fill with Routine Standby ---
                 elif strategy_idx == 2:
                     primary_task = uncompleted_tasks[0]
                     reject_reasons = self._evaluate_task_constraints(
@@ -514,17 +530,104 @@ class FinalSchedulerTab(QWidget):
                         assigned_activity = f"📡 [Standby] Routine TM Downlink / Health Check (Waits for [{primary_task['main']}])"
                         assigned_remark = f"Primary Task Blocked: {', '.join(reject_reasons)}"
 
+                # --- 4. Mode 3: 🌐 Cross-Satellite Swap (Swarm Fallback) ---
+                elif strategy_idx == 3:
+                    # [1단계] 본래 작업 시도[cite: 8]
+                    primary_task = uncompleted_tasks[0]
+                    reject_reasons = self._evaluate_task_constraints(
+                        primary_task, p_el, p_dur, st_info, st_name, 
+                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                    )
+                    if not reject_reasons:
+                        assigned_task = primary_task
+                        primary_task["completed"] = True
+                        sat_completed_mains[matched_plan_key].add(primary_task["main"])
+                        sub_str = f" ({primary_task['sub']})" if primary_task['sub'] else ""
+                        assigned_activity = f"[{primary_task['sequence_id']}] {primary_task['main']}{sub_str}"
+                        assigned_status = "Allocated"
+                        assigned_remark = primary_task.get("remark", "")
+                    else:
+                        # [2단계] 동시간대 타 위성 후보 탐색 및 스왑[cite: 8]
+                        found_swap = False
+                        other_candidates = []
+                        
+                        for cand_p in self.all_candidate_passes:
+                            c_st = cand_p.get("station", "").split("(")[0].strip()
+                            c_sat_norm = normalize_sat_name(cand_p.get("satellite", ""))
+                            if c_st == st_name and c_sat_norm != matched_plan_key:
+                                if not (cand_p.get("los", "") <= p_aos_str or cand_p.get("aos", "") >= p_los_str):
+                                    other_candidates.append((c_sat_norm, cand_p))
+
+                        for other_sat_key, other_p in other_candidates:
+                            other_plan = sat_plans.get(other_sat_key, [])
+                            other_uncompleted = [t for t in other_plan if not t["completed"]]
+                            if not other_uncompleted: continue
+                            
+                            other_step = len(other_plan) - len(other_uncompleted)
+                            o_dur = float(other_p.get("duration_sec", other_p.get("duration", p_dur)))
+                            o_el = float(other_p.get("max_elevation_deg", other_p.get("max_el", p_el)))
+                            
+                            for o_task in other_uncompleted:
+                                o_reasons = self._evaluate_task_constraints(
+                                    o_task, o_el, o_dur, st_info, st_name,
+                                    sat_completed_mains[other_sat_key], other_step, min_other_prog, max_lead_steps
+                                )
+                                if not o_reasons:
+                                    o_task["completed"] = True
+                                    sat_completed_mains[other_sat_key].add(o_task["main"])
+                                    assigned_sat = other_p.get("satellite", other_sat_key)
+                                    assigned_pass_no = f"Pass {other_p.get('pass_no', '')}"
+                                    sub_str = f" ({o_task['sub']})" if o_task['sub'] else ""
+                                    assigned_activity = f"[{o_task['sequence_id']}] {o_task['main']}{sub_str} 🔄[Swapped from {matched_plan_key}]"
+                                    assigned_status = "Allocated"
+                                    assigned_remark = o_task.get("remark", "")
+                                    assigned_task = o_task
+                                    found_swap = True
+                                    break
+                            if found_swap: break
+
+                        # [3단계] 동일 위성 Look-Ahead 당겨오기 Fallback[cite: 8]
+                        if not found_swap:
+                            for candidate_task in uncompleted_tasks[1:]:
+                                reasons = self._evaluate_task_constraints(
+                                    candidate_task, p_el, p_dur, st_info, st_name, 
+                                    sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                                )
+                                if not reasons:
+                                    assigned_task = candidate_task
+                                    candidate_task["completed"] = True
+                                    sat_completed_mains[matched_plan_key].add(candidate_task["main"])
+                                    sub_str = f" ({candidate_task['sub']})" if candidate_task['sub'] else ""
+                                    assigned_activity = f"[{candidate_task['sequence_id']}] {candidate_task['main']}{sub_str} ⚡[Pulled Ahead]"
+                                    assigned_status = "Allocated"
+                                    assigned_remark = candidate_task.get("remark", "")
+                                    break
+
+                        # [4단계] 최후 Bypassed 유지[cite: 8]
+                        if not assigned_task:
+                            assigned_activity = f"[{primary_task['main']}] Blocked ({', '.join(reject_reasons)})"
+                            assigned_status = "Bypassed"
+                            assigned_remark = primary_task.get("remark", "")
+
                 self.final_schedule_data.append({
-                    "station": p.get("station", ""), "satellite": p_sat_full,
-                    "pass_no": f"Pass {p.get('pass_no', '')}", "aos": p.get("aos", ""),
-                    "los": p.get("los", ""), "duration": p_dur, "max_el": p_el,
+                    "station": p.get("station", ""), "satellite": assigned_sat,
+                    "pass_no": assigned_pass_no, "aos": p_aos_str,
+                    "los": p_los_str, "duration": p_dur, "max_el": p_el,
                     "status": assigned_status, "activity": assigned_activity,
                     "remark": assigned_remark, "raw_pass": p
                 })
 
             self.populate_final_table_ui()
             strat_name = self.combo_strategy.currentText()
-            QMessageBox.information(self, "Allocation Success", f"Successfully compiled schedule using:\n'{strat_name}'")
+            
+            detail_msg = {
+                0: "• Mode: Strict Sequential (All blocked passes preserved as bypassed)",
+                1: "• Mode: Look-Ahead & Fill (Pulled available tasks of the same satellite)",
+                2: "• Mode: Fill with Routine Standby (Filled unused passes with TM acquisition)",
+                3: "• Mode: Cross-Satellite Swap Fallback Chain:\n  [1st] Primary Task ➔ [2nd] Swarm Swap ➔ [3rd] Same-Sat Look-Ahead ➔ [4th] Bypassed"
+            }.get(strategy_idx, "")
+            
+            QMessageBox.information(self, "Allocation Success", f"Successfully compiled schedule using:\n'{strat_name}'\n\n{detail_msg}")
             
         except Exception as e:
             QMessageBox.critical(self, "Engine Error", f"Failed to execute LEOP schedule:\n{str(e)}")
@@ -536,21 +639,21 @@ class FinalSchedulerTab(QWidget):
         if row < 0 or row >= len(self.final_schedule_data): return
         
         pass_item = self.final_schedule_data[row]
-        sat_norm = normalize_sat_name(pass_item.get("satellite", ""))
-        candidate_tasks = self.sat_plans_cached.get(sat_norm, [])
 
         dialog = ManualActivityDialog(
             pass_item=pass_item,
-            candidate_tasks=candidate_tasks,
+            all_sat_plans=self.sat_plans_cached,
             current_activity=pass_item.get("activity", ""),
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_status, new_act, new_rem = dialog.get_result()
+            new_sat, new_status, new_act, new_rem = dialog.get_result()
+            pass_item["satellite"] = new_sat
             pass_item["status"] = new_status
             pass_item["activity"] = new_act
             if new_rem: pass_item["remark"] = new_rem
 
+            self.final_table.setItem(row, 1, QTableWidgetItem(new_sat))
             self.final_table.setItem(row, 7, QTableWidgetItem(new_status))
             self.final_table.setItem(row, 8, QTableWidgetItem(new_act))
             self.final_table.setItem(row, 9, QTableWidgetItem(pass_item.get("remark", "")))
