@@ -1,6 +1,7 @@
-# 지상국이름, 위도, 경도, 다운로드 가능여부(Y/N), 커맨딩 가능여부(Y/N)
-Daejeon, 36.35, 127.38, Y, Y
-Jeju, 33.50, 126.52, Y, Y
-Svalbard, 78.23, 15.49, N, Y
-King Sejong, -62.22, -58.78, N, Y
-Daejeon2, 36.35, 127.38, Y, N
+# Station_Name, Latitude, Longitude, Is_Download_Capable(Y/N), Is_Command_Capable(Y/N), RX_Capacity, TX_Capacity
+# (이 파일은 Ground Station Manager 다이얼로그에 의해 자동 생성/갱신되었습니다)
+Daejeon, 36.35, 127.38, Y, Y, 1, 1
+Jeju, 33.5, 126.52, Y, Y, 1, 1
+Svalbard, 78.23, 15.49, N, Y, 1, 1
+King Sejong, -62.22, -58.78, N, Y, 1, 1
+Daejeon2, 36.35, 127.38, Y, N, 1, 1

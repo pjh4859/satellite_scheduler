@@ -49,13 +49,16 @@ def export_to_csv(file_path, passes_list):
             ])
 
 
-def export_to_yaml(file_path, passes_list, all_passes=None):
+def export_to_yaml(file_path, passes_list, all_passes=None, station_data=None, antenna_overrides=None):
     """
     Tab 1 패스 예측 스케줄을 YAML 파일로 내보내기
     
     [기능 설명]
     - 선택된 패스 목록을 생성 시각 타임스탬프와 함께 정돈된 YAML 규격 문서로 출력합니다.
     - all_passes가 제공될 경우 탈락/충돌 패스를 포함한 전체 후보 풀을 'all_candidate_passes'로 함께 직렬화합니다.
+    - 💡 [추가기능 6] station_data가 제공되면, 이 스케줄이 어떤 지상국 용량(RX/TX 안테나 대수) 및
+      점검 일정 전제 하에 계산됐는지도 함께 기록합니다. 나중에 이 파일만 봐도 "그때 그 지상국이
+      몇 대였는지"를 알 수 있어서, 스케줄을 재현하거나 검토할 때 도움이 됩니다.
     """
     selected_passes = [p for p in passes_list if p.get('selected', False)]
     formatted_list = []
@@ -115,17 +118,98 @@ def export_to_yaml(file_path, passes_list, all_passes=None):
             })
         payload["all_candidate_passes"] = formatted_all
 
+    # 💡 [추가기능 6] 지상국별 RX/TX 용량 및 점검 일정(있는 경우) 스냅샷
+    if station_data:
+        station_capacity_snapshot = []
+        for st in station_data:
+            st_name = st[0]
+            entry = {
+                "station": st_name,
+                "rx_capacity": int(st[5]) if len(st) > 5 else 1,
+                "tx_capacity": int(st[6]) if len(st) > 6 else 1,
+            }
+            overrides_for_station = [ov for ov in (antenna_overrides or []) if ov.get("station") == st_name]
+            if overrides_for_station:
+                entry["maintenance_windows"] = [
+                    {
+                        "start": ov["start_dt"].strftime('%Y-%m-%d %H:%M:%S') if isinstance(ov.get("start_dt"), datetime) else str(ov.get("start_dt")),
+                        "end": ov["end_dt"].strftime('%Y-%m-%d %H:%M:%S') if isinstance(ov.get("end_dt"), datetime) else str(ov.get("end_dt")),
+                        "rx_capacity": ov.get("rx_capacity"),
+                        "tx_capacity": ov.get("tx_capacity"),
+                        "reason": ov.get("reason", "")
+                    }
+                    for ov in overrides_for_station
+                ]
+            station_capacity_snapshot.append(entry)
+        payload["station_capacity_snapshot"] = station_capacity_snapshot
+
     with open(file_path, "w", encoding="utf-8") as f:
         yaml.dump(payload, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
-def export_to_excel_with_color(file_path, passes_list):
+# ==============================================================================
+# 💡 [추가기능 6] Excel에 지상국 용량 정보를 별도 시트로 추가하는 공용 헬퍼
+# ------------------------------------------------------------------------------
+# Tab1(Pass Prediction)과 Tab3(Final Schedule) 양쪽의 Excel 내보내기에서 공통으로
+# 사용합니다. CSV는 다운스트림 도구가 순수 표 형태로 파싱하는 경우가 많아 건드리지
+# 않았지만, Excel은 시트를 여러 개 둘 수 있어서 "본 데이터를 해치지 않고" 참고 정보를
+# 추가하기에 적합합니다.
+# ==============================================================================
+def _write_station_capacity_sheet(wb, station_data, antenna_overrides=None):
+    if not station_data:
+        return
+    ws = wb.create_sheet("Station Capacity Info")
+    headers = ["Station", "RX Capacity", "TX Capacity", "Maintenance Window", "Override RX", "Override TX", "Reason"]
+    ws.append(headers)
+
+    header_fill = PatternFill(start_color="455A64", end_color="455A64", fill_type="solid")
+    header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+
+    data_font = Font(name="맑은 고딕", size=10)
+    row_idx = 2
+    for st in station_data:
+        st_name = st[0]
+        base_rx = int(st[5]) if len(st) > 5 else 1
+        base_tx = int(st[6]) if len(st) > 6 else 1
+        overrides_for_station = [ov for ov in (antenna_overrides or []) if ov.get("station") == st_name]
+
+        if not overrides_for_station:
+            ws.append([st_name, base_rx, base_tx, "", "", "", ""])
+            for col_idx in range(1, len(headers) + 1):
+                ws.cell(row=row_idx, column=col_idx).font = data_font
+            row_idx += 1
+        else:
+            for ov in overrides_for_station:
+                start_s = ov["start_dt"].strftime('%Y-%m-%d %H:%M') if isinstance(ov.get("start_dt"), datetime) else str(ov.get("start_dt"))
+                end_s = ov["end_dt"].strftime('%Y-%m-%d %H:%M') if isinstance(ov.get("end_dt"), datetime) else str(ov.get("end_dt"))
+                ws.append([
+                    st_name, base_rx, base_tx, f"{start_s} ~ {end_s}",
+                    ov.get("rx_capacity") if ov.get("rx_capacity") is not None else "(No Change)",
+                    ov.get("tx_capacity") if ov.get("tx_capacity") is not None else "(No Change)",
+                    ov.get("reason", "")
+                ])
+                for col_idx in range(1, len(headers) + 1):
+                    ws.cell(row=row_idx, column=col_idx).font = data_font
+                row_idx += 1
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = col[0].column_letter
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+
+def export_to_excel_with_color(file_path, passes_list, station_data=None, antenna_overrides=None):
     """
     Tab 1 패스 예측 스케줄을 파스텔 색상 포함 Excel 파일로 내보내기
     
     [기능 설명]
     - 지상국별 고유 파스텔 배경색을 각 행(Row)에 적용하여 가시성을 높인 엑셀 문서를 만듭니다.
     - 파일이 이미 열려 있어 발생하는 PermissionError 시 친절한 오류 메시지와 성공 여부(True/False)를 반환합니다.
+    - 💡 [추가기능 6] station_data가 제공되면 "Station Capacity Info" 시트를 추가로 만듭니다.
     """
     try:
         selected_passes = [p for p in passes_list if p.get('selected', False)]
@@ -170,7 +254,9 @@ def export_to_excel_with_color(file_path, passes_list):
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = col[0].column_letter
             ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
-            
+
+        _write_station_capacity_sheet(wb, station_data, antenna_overrides)
+
         wb.save(file_path)
         return True, "Success"
     except PermissionError:
@@ -278,9 +364,10 @@ def export_final_schedule_to_csv(file_path, final_data):
             ])
 
 
-def export_final_schedule_to_excel(file_path, final_data, color_mode):
+def export_final_schedule_to_excel(file_path, final_data, color_mode, station_data=None, antenna_overrides=None):
     """
     Tab 3 최종 통합 스케줄을 Excel 파일로 내보내기 (Remark 열 추가)
+    💡 [추가기능 6] station_data가 제공되면 "Station Capacity Info" 시트를 추가로 만듭니다.
     """
     try:
         from core.color_manager import color_manager
@@ -326,7 +413,9 @@ def export_final_schedule_to_excel(file_path, final_data, color_mode):
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = col[0].column_letter
             ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
-            
+
+        _write_station_capacity_sheet(wb, station_data, antenna_overrides)
+
         wb.save(file_path)
         return True, "Success"
     except PermissionError:

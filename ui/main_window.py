@@ -19,6 +19,9 @@ class SatelliteSchedulerApp(QMainWindow):
         self.is_populating = False
         self.station_data = []
         self.plans_dir = "plans"
+        # 💡 [안테나 점검 일정 지원] Tab1(RX 용량)과 Tab3(TX 용량) 양쪽에서 모두 참조해야 하므로
+        #    특정 탭 소유가 아니라 이 허브(main_app)에 공유 상태로 둡니다.
+        self.antenna_overrides = []
         
         # 기본 템플릿 환경 구성 자동 가동
         create_default_plan_csv(self.plans_dir)

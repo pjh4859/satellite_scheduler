@@ -5,11 +5,12 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget,
                              QDateTimeEdit, QSpinBox, QPushButton, QTableWidget, 
                              QTableWidgetItem, QLabel, QFileDialog, QHeaderView, QMessageBox, 
                              QInputDialog, QDialog, QListWidgetItem, QDialogButtonBox, QCheckBox,
-                             QRadioButton, QGroupBox, QComboBox)
+                             QRadioButton, QGroupBox, QComboBox, QProgressBar, QApplication)
 from PyQt6.QtCore import Qt, QUrl, QDateTime, QTimer
 from PyQt6.QtGui import QColor, QFont, QDesktopServices
 
-from core.scheduler import parse_tle_from_dir, parse_stations_from_dir, calculate_passes
+from core.scheduler import (parse_tle_from_dir, parse_stations_from_dir, calculate_passes,
+                             build_capacity_lookup, find_capacity_overflow, compute_time_weighted_avg_capacity)
 from core.exporter import export_to_csv, export_to_yaml, export_to_excel_with_color
 from core.tle_fetcher import search_satellites_from_celestrak, download_tle_by_norad_id
 from core.config_manager import config_manager
@@ -25,6 +26,8 @@ from ui.tab1_file_loader import ExternalScheduleLoader
 from ui.dialog_orbit_map import OrbitMapDialog
 from ui.dialog_conflict_solver import ConflictSolverDialog
 from ui.dialog_analytics import AnalyticsDashboardDialog
+from ui.dialog_station_manager import StationManagerDialog
+from ui.dialog_antenna_overrides import AntennaOverrideDialog
 
 class PassPredictTab(QWidget):
     def __init__(self, main_app):
@@ -106,7 +109,24 @@ class PassPredictTab(QWidget):
         self.btn_open_gs_folder = QPushButton("📂 Open Folder")
         self.btn_open_gs_folder.clicked.connect(lambda: self.open_local_folder(self.stations_dir))
         gs_btn_layout.addWidget(self.btn_open_gs_folder)
+
+        # 💡 [M1 UI 노출] 텍스트 파일을 직접 안 만져도 RX/TX 안테나 대수를 설정할 수 있는 관리 화면
+        self.btn_manage_stations = QPushButton("🛰️ Manage Stations")
+        self.btn_manage_stations.setStyleSheet("font-weight: bold; color: #1B5E20;")
+        self.btn_manage_stations.clicked.connect(self.click_manage_stations)
+        gs_btn_layout.addWidget(self.btn_manage_stations)
+
+        # 💡 [안테나 점검 일정 지원] 지상국 안테나의 일시적 용량 변경(점검 등)을 관리하는 화면
+        self.btn_manage_antenna_overrides = QPushButton("🔧 Maintenance Schedule")
+        self.btn_manage_antenna_overrides.setStyleSheet("font-weight: bold; color: #E65100;")
+        self.btn_manage_antenna_overrides.clicked.connect(self.click_manage_antenna_overrides)
+        gs_btn_layout.addWidget(self.btn_manage_antenna_overrides)
         left_panel.addLayout(gs_btn_layout)
+
+        # 💡 [사용성 개선] 등록된 점검 일정 중 몇 개가 "지금 이 순간" 진행 중인지 한눈에 보여줌
+        self.lbl_antenna_override_status = QLabel("등록된 점검 일정 없음")
+        self.lbl_antenna_override_status.setStyleSheet("color: #666666; font-size: 11px; padding-left: 2px;")
+        left_panel.addWidget(self.lbl_antenna_override_status)
         
         # 3. 시간 설정
         left_panel.addWidget(QLabel("<b>3. Time Window (UTC):</b>"))
@@ -186,6 +206,13 @@ class PassPredictTab(QWidget):
         self.btn_calculate.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;")
         self.btn_calculate.clicked.connect(self.run_scheduling)
         left_panel.addWidget(self.btn_calculate)
+
+        # 💡 [성능/UX 개선] 궤도 전파 진행률 표시줄. 평소엔 숨겨져 있다가 계산 중에만 나타남.
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%  (%v / %m 위성 완료)")
+        left_panel.addWidget(self.progress_bar)
         layout.addLayout(left_panel, stretch=1)
         
         # ----------------------------------------------------------------------
@@ -264,6 +291,18 @@ class PassPredictTab(QWidget):
         self.lbl_summary_bar = QLabel("📊 Satellite Pass Distribution Summary: Run calculation or import schedule file.")
         self.lbl_summary_bar.setStyleSheet("background-color: #F1F8E9; border: 1px solid #C8E6C9; padding: 6px; font-weight: bold; color: #2E7D32;")
         right_panel.addWidget(self.lbl_summary_bar)
+
+        # 💡 [추가기능 2] TX(커맨딩) 사전 경고 배너
+        # ------------------------------------------------------------------------------
+        # Tab1은 미션 플랜(어떤 작업이 CMD를 요구하는지)을 모르기 때문에, "정확히 몇 개가
+        # 충돌할지"는 Tab3에 가야 알 수 있습니다. 다만 "이 지상국은 안테나가 N대라 동시에
+        # N개를 뽑아놨는데, TX 채널은 M개뿐이다(N>M)"라는 구조적 사실은 Tab1에서도 미리
+        # 알 수 있으므로, 이걸 조기 경고로 보여줍니다. (숨겨져 있다가 필요할 때만 나타남)
+        self.lbl_tx_warning = QLabel("")
+        self.lbl_tx_warning.setStyleSheet("background-color: #FFF3E0; border: 1px solid #FFB74D; padding: 6px; font-weight: bold; color: #E65100;")
+        self.lbl_tx_warning.setWordWrap(True)
+        self.lbl_tx_warning.setVisible(False)
+        right_panel.addWidget(self.lbl_tx_warning)
         
         self.table = QTableWidget()
         self.table.setColumnCount(9)
@@ -331,10 +370,18 @@ class PassPredictTab(QWidget):
         start_dt = self.start_time_edit.dateTime().toPyDateTime()
         end_dt = self.end_time_edit.dateTime().toPyDateTime()
 
+        # 💡 [M3] 안테나 대수를 반영한 가동률 계산을 위해 지상국별 RX 용량을 함께 전달
+        station_capacity = {
+            st[0]: (st[5] if len(st) > 5 else 1)
+            for st in getattr(self.main_app, 'station_data', [])
+        }
+
         dialog = AnalyticsDashboardDialog(
             calculated_passes=self.main_app.calculated_passes,
             start_dt=start_dt,
             end_dt=end_dt,
+            station_capacity=station_capacity,
+            antenna_overrides=getattr(self.main_app, 'antenna_overrides', []),
             parent=self
         )
         dialog.exec()
@@ -423,6 +470,11 @@ class PassPredictTab(QWidget):
             all_sats.add(sat_clean)
 
         all_st_names = [st[0] for st in getattr(self.main_app, 'station_data', [])]
+        # 💡 [추가기능 3] 가중치 조정 화면에서 지상국별 RX/TX 용량을 참고할 수 있도록 함께 전달
+        station_capacity_info = {
+            st[0]: (st[5] if len(st) > 5 else 1, st[6] if len(st) > 6 else 1)
+            for st in getattr(self.main_app, 'station_data', [])
+        }
 
         dialog = ConflictSolverDialog(
             all_satellites=all_sats,
@@ -432,6 +484,8 @@ class PassPredictTab(QWidget):
             saved_weights=getattr(self, 'auto_resolve_weights', None),
             saved_priorities=getattr(self, 'auto_resolve_priorities', None),
             all_stations=all_st_names,
+            station_capacity=station_capacity_info,
+            antenna_overrides=getattr(self.main_app, 'antenna_overrides', []),
             saved_excluded_stations=getattr(self, 'auto_resolve_excluded_stations', []),
             parent=self
         )
@@ -446,6 +500,25 @@ class PassPredictTab(QWidget):
             self.auto_resolve_excluded_stations = excluded_stations
             self.save_settings()
 
+            # 💡 최초 계산(calculate_passes) 때와 동일한 지상국별 RX 용량(안테나 대수)을 넘겨줘야,
+            #    "Auto Resolve"를 나중에 다시 눌러도 안테나 개수 제약이 그대로 유지됩니다.
+            # 💡 [안테나 점검 일정 지원] 정수 대신, 점검 일정을 반영한 "시간대별 용량 조회 함수"로 구성합니다.
+            #    (build_capacity_lookup은 오버라이드가 없으면 항상 기본값만 반환하므로 하위 호환됩니다)
+            antenna_overrides = getattr(self.main_app, 'antenna_overrides', [])
+            station_capacity = {}
+            for st in getattr(self.main_app, 'station_data', []):
+                st_name = st[0]
+                base_rx = st[5] if len(st) > 5 else 1
+                overrides_for_station = [ov for ov in antenna_overrides if ov.get("station") == st_name]
+                station_capacity[st_name] = build_capacity_lookup(base_rx, overrides_for_station, "rx_capacity")
+
+            # 💡 [기능2 후속 개선] 최초 계산 때와 동일하게, 근무시간 자격 검증도 그대로 유지해야
+            #    Auto Resolve를 다시 눌렀을 때 근무시간 밖 패스가 실수로 재선정되지 않습니다.
+            if self.chk_use_shift_hours.isChecked():
+                is_pass_eligible = lambda p: self.is_pass_in_shift_hours(p['aos'], p['los'], p.get('station'))
+            else:
+                is_pass_eligible = None
+
             resolved_passes = resolve_conflicts(
                 passes=self.main_app.calculated_passes,
                 weights=weights,
@@ -453,7 +526,9 @@ class PassPredictTab(QWidget):
                 equalize_target_sats=self.equalize_target_sats,
                 min_pass_targets=self.min_pass_targets,
                 max_pass_targets=self.max_pass_targets,
-                excluded_stations=self.auto_resolve_excluded_stations
+                excluded_stations=self.auto_resolve_excluded_stations,
+                station_capacity=station_capacity,
+                is_pass_eligible=is_pass_eligible
             )
             self.main_app.calculated_passes = resolved_passes
             self.populate_table()
@@ -467,6 +542,38 @@ class PassPredictTab(QWidget):
     # --------------------------------------------------------------------------
     # 외부 파일 로더 연결
     # --------------------------------------------------------------------------
+    def _validate_import_capacity(self, passes):
+        """
+        💡 [추가기능 5] 외부에서 불러온 스케줄이 "이미 selected로 표시된 상태"로 들어오므로,
+        혹시 현재 설정된 지상국 용량(안테나 대수, 점검 일정 포함)을 초과해서 동시에
+        선택된 패스가 있는지 검사합니다. TX(커맨딩) 쪽은 미션 플랜(Tab2/3) 정보가 있어야
+        판단 가능해서 Tab1 단계에서는 검사하지 않고, RX(수신 동시성)만 검사합니다.
+        :return: 경고 문자열 리스트 (문제 없으면 빈 리스트)
+        """
+        station_data = getattr(self.main_app, 'station_data', [])
+        antenna_overrides = getattr(self.main_app, 'antenna_overrides', [])
+        capacity_fns = {}
+        for st in station_data:
+            base_rx = st[5] if len(st) > 5 else 1
+            overrides_for_station = [ov for ov in antenna_overrides if ov.get("station") == st[0]]
+            capacity_fns[st[0]] = build_capacity_lookup(base_rx, overrides_for_station, "rx_capacity")
+
+        by_station = {}
+        for p in passes:
+            if p.get('selected', True):
+                by_station.setdefault(p['station'], []).append(p)
+
+        warnings = []
+        for st_name, plist in by_station.items():
+            capacity_fn = capacity_fns.get(st_name, lambda dt: 1)
+            _peak, worst_excess = find_capacity_overflow(plist, capacity_fn)
+            if worst_excess > 0:
+                warnings.append(
+                    f"'{st_name}': 동시에 선택된 패스가 지상국 용량을 최대 {worst_excess}개 초과합니다 "
+                    f"(안테나 대수 또는 점검 일정을 확인해주세요)"
+                )
+        return warnings
+
     def click_import_external_schedule(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Import Schedule File", self.pass_output_dir, 
@@ -494,7 +601,12 @@ class PassPredictTab(QWidget):
             msg = f"Successfully loaded {len(parsed_passes)} pass records from:\n'{filename}'"
             if conflict_count > 0:
                 msg += f"\n\n⚠️ Identified {conflict_count} conflict group(s) (Ready for Auto Resolve)."
-                
+
+            # 💡 [추가기능 5] 현재 설정된 지상국 용량(안테나 대수) 기준으로 초과 여부 검사
+            capacity_warnings = self._validate_import_capacity(self.main_app.calculated_passes)
+            if capacity_warnings:
+                msg += "\n\n🔧 지상국 용량 초과 가능성:\n" + "\n".join(f"• {w}" for w in capacity_warnings)
+
             QMessageBox.information(self, "Import Complete", msg)
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to load schedule file:\n{str(e)}")
@@ -515,6 +627,14 @@ class PassPredictTab(QWidget):
         los_naive = los_dt.replace(tzinfo=None) if los_dt.tzinfo else los_dt
 
         for rule in self.shift_hours_rules:
+            # 💡 [기능 2 신규] 이 규칙이 이 지상국에 적용되는 규칙인지 먼저 확인합니다.
+            #    applies_to_stations가 None이면 "전체 지상국 적용"(기존 동작과 동일, 하위 호환).
+            #    리스트가 있으면 그 안에 이 지상국 이름이 있을 때만 이 규칙을 검사합니다.
+            #    -> 이렇게 하면 지상국마다 서로 다른 근무시간 규칙을 가질 수 있습니다.
+            applies_to = rule.get("applies_to_stations")
+            if applies_to is not None and station_name not in applies_to:
+                continue
+
             s_date = rule["start_date"]
             e_date = rule["end_date"]
             active_days = rule.get("days", [0, 1, 2, 3, 4, 5, 6])
@@ -582,6 +702,12 @@ class PassPredictTab(QWidget):
                     t_str = f"{r['start_time'].strftime('%H:%M')} ~ {r['end_time'].strftime('%H:%M')}{overnight} UTC"
                     info_tokens.append(f"• {r['phase_name']}: {d_range} [{t_str}] ({d_str})")
 
+                # 💡 [기능 2] 이 규칙이 전체 지상국이 아니라 특정 지상국에만 적용되면 명시적으로 표기
+                applies_to = r.get("applies_to_stations")
+                if applies_to is not None:
+                    scope_str = ", ".join(applies_to) if applies_to else "(없음 - 어느 지상국에도 적용 안 됨)"
+                    info_tokens[-1] += f"\n    ↳ 적용 지상국: {scope_str}"
+
             exempt_msg = f"\n\n🌐 24/7 Always Active Stations:\n• {', '.join(self.shift_exempt_stations)}" if self.shift_exempt_stations else "\n\n🌐 24/7 Always Active Stations: None"
             msg = "Updated Shift Hours Rules (UTC):\n" + "\n".join(info_tokens) + exempt_msg
             QMessageBox.information(self, "Shift Rules Updated", msg)
@@ -602,7 +728,21 @@ class PassPredictTab(QWidget):
                 "start_time": r["start_time"].strftime("%H:%M:%S") if isinstance(r["start_time"], time) else str(r["start_time"]),
                 "end_time": r["end_time"].strftime("%H:%M:%S") if isinstance(r["end_time"], time) else str(r["end_time"]),
                 "is_24h": r.get("is_24h", False),
-                "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
+                "days": r.get("days", [0, 1, 2, 3, 4, 5, 6]),
+                # 💡 [기능 2] None(전체 적용) 또는 지상국 이름 리스트 그대로 저장
+                "applies_to_stations": r.get("applies_to_stations", None)
+            })
+
+        # 💡 [안테나 점검 일정 지원] datetime은 JSON으로 바로 못 담으므로 isoformat 문자열로 변환
+        serialized_antenna_overrides = []
+        for ov in getattr(self.main_app, 'antenna_overrides', []):
+            serialized_antenna_overrides.append({
+                "station": ov.get("station", ""),
+                "start_dt": ov["start_dt"].isoformat() if isinstance(ov.get("start_dt"), datetime) else str(ov.get("start_dt")),
+                "end_dt": ov["end_dt"].isoformat() if isinstance(ov.get("end_dt"), datetime) else str(ov.get("end_dt")),
+                "rx_capacity": ov.get("rx_capacity"),
+                "tx_capacity": ov.get("tx_capacity"),
+                "reason": ov.get("reason", "")
             })
 
         start_dt_str = self.start_time_edit.dateTime().toString("yyyy-MM-dd HH:mm:ss")
@@ -620,6 +760,7 @@ class PassPredictTab(QWidget):
             "use_shift_hours": self.chk_use_shift_hours.isChecked(),
             "shift_hours_rules": serialized_shift_rules,
             "shift_exempt_stations": list(getattr(self, 'shift_exempt_stations', [])),
+            "antenna_overrides": serialized_antenna_overrides,
             "use_equalize": self.chk_equalize_sat.isChecked(),
             "equalize_target_sats": list(self.equalize_target_sats) if self.equalize_target_sats else None,
             "min_pass_targets": self.min_pass_targets,
@@ -679,7 +820,9 @@ class PassPredictTab(QWidget):
                         "start_time": s_time,
                         "end_time": e_time,
                         "is_24h": r.get("is_24h", False),
-                        "days": r.get("days", [0, 1, 2, 3, 4, 5, 6])
+                        "days": r.get("days", [0, 1, 2, 3, 4, 5, 6]),
+                        # 💡 [기능 2] 구버전 저장 파일(필드 없음)이면 기본값 None(전체 적용) - 하위 호환
+                        "applies_to_stations": r.get("applies_to_stations", None)
                     })
                 except Exception:
                     continue
@@ -687,6 +830,24 @@ class PassPredictTab(QWidget):
                 self.shift_hours_rules = restored_rules
 
             self.shift_exempt_stations = tab1_cfg.get("shift_exempt_stations", [])
+
+            # 💡 [안테나 점검 일정 지원] main_app(허브)의 공유 상태로 복원합니다.
+            raw_overrides = tab1_cfg.get("antenna_overrides", [])
+            restored_overrides = []
+            for ov in raw_overrides:
+                try:
+                    restored_overrides.append({
+                        "station": ov.get("station", ""),
+                        "start_dt": datetime.fromisoformat(ov["start_dt"]),
+                        "end_dt": datetime.fromisoformat(ov["end_dt"]),
+                        "rx_capacity": ov.get("rx_capacity"),
+                        "tx_capacity": ov.get("tx_capacity"),
+                        "reason": ov.get("reason", "")
+                    })
+                except Exception:
+                    continue  # 손상된 항목 하나 때문에 전체 복원이 실패하지 않도록 개별적으로 건너뜀
+            self.main_app.antenna_overrides = restored_overrides
+            self.update_antenna_override_status_label()
 
             if tab1_cfg.get("equalize_target_sats") is not None:
                 self.equalize_target_sats = set(tab1_cfg["equalize_target_sats"])
@@ -749,21 +910,47 @@ class PassPredictTab(QWidget):
             QMessageBox.warning(self, "Warning", "No TLE files or Ground Stations selected.")
             return
             
-        raw_passes = calculate_passes(
-            tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
-            equalize_allocation=equalize,
-            equalize_target_sats=self.equalize_target_sats,
-            min_pass_targets=self.min_pass_targets,
-            max_pass_targets=self.max_pass_targets
-        )
-
+        # 💡 [기능2 후속 개선] 근무시간 필터를 "선정 이후 걸러내기"가 아니라
+        #    "선정 이전 자격 검증"으로 넘깁니다. 이렇게 하면 자격 없는 후보 때문에
+        #    자격 있는 차점자가 밀려나는 일 없이, 애초에 자격 있는 후보들끼리만 경합합니다.
         if self.chk_use_shift_hours.isChecked():
-            filtered_passes = [
-                p for p in raw_passes if self.is_pass_in_shift_hours(p['aos'], p['los'], p.get('station'))
-            ]
-            self.main_app.calculated_passes = filtered_passes
+            is_pass_eligible = lambda p: self.is_pass_in_shift_hours(p['aos'], p['los'], p.get('station'))
         else:
-            self.main_app.calculated_passes = raw_passes
+            is_pass_eligible = None
+
+        # 💡 [성능/UX 개선] 위성 궤도 전파가 하나 끝날 때마다 진행률 표시줄을 갱신합니다.
+        #    이 계산은 단일 스레드에서 동기적으로 돌기 때문에, QApplication.processEvents()를
+        #    직접 호출해서 그 순간의 화면 갱신(페인트 이벤트)을 강제로 처리시켜줘야 실제로
+        #    진행률 표시줄이 실시간으로 움직이는 게 보입니다 (안 하면 계산 끝난 뒤에야 한번에 그려짐).
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(len(tle_data))
+        self.progress_bar.setValue(0)
+        self.btn_calculate.setEnabled(False)  # 계산 중 중복 클릭 방지
+
+        def _on_progress(done, total, sat_name):
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(done)
+            QApplication.processEvents()
+
+        try:
+            raw_passes = calculate_passes(
+                tle_data, selected_stations, start_dt, end_dt, min_el, min_dur, start_pass_no,
+                equalize_allocation=equalize,
+                equalize_target_sats=self.equalize_target_sats,
+                min_pass_targets=self.min_pass_targets,
+                max_pass_targets=self.max_pass_targets,
+                is_pass_eligible=is_pass_eligible,
+                antenna_overrides=getattr(self.main_app, 'antenna_overrides', []),
+                progress_callback=_on_progress
+            )
+        finally:
+            self.progress_bar.setVisible(False)
+            self.btn_calculate.setEnabled(True)
+
+        # 💡 근무시간 밖으로 걸러진 패스도 이제 목록에서 통째로 사라지지 않고,
+        #    "Shift Hours Blocked" 상태로 남아 표에 계속 보입니다 (다른 Bypassed/Capped 패스들과 동일한 방식).
+        self.main_app.calculated_passes = raw_passes
 
         self.populate_table()
 
@@ -832,13 +1019,79 @@ class PassPredictTab(QWidget):
         finally:
             self.tle_file_list.blockSignals(False)
 
+    def update_antenna_override_status_label(self):
+        """💡 [사용성 개선] 등록된 점검 일정 개수와, 그중 지금 진행 중인 개수를 요약해서 보여줍니다."""
+        overrides = getattr(self.main_app, 'antenna_overrides', [])
+        if not overrides:
+            self.lbl_antenna_override_status.setText("등록된 점검 일정 없음")
+            return
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        active_count = 0
+        for ov in overrides:
+            s = ov["start_dt"].replace(tzinfo=None) if ov["start_dt"].tzinfo else ov["start_dt"]
+            e = ov["end_dt"].replace(tzinfo=None) if ov["end_dt"].tzinfo else ov["end_dt"]
+            if s <= now < e:
+                active_count += 1
+
+        if active_count > 0:
+            self.lbl_antenna_override_status.setText(
+                f"🔧 점검 일정 {len(overrides)}건 등록됨 (🔴 지금 {active_count}건 진행 중)"
+            )
+            self.lbl_antenna_override_status.setStyleSheet("color: #C62828; font-size: 11px; font-weight: bold; padding-left: 2px;")
+        else:
+            self.lbl_antenna_override_status.setText(f"🔧 점검 일정 {len(overrides)}건 등록됨 (현재 진행 중인 것 없음)")
+            self.lbl_antenna_override_status.setStyleSheet("color: #666666; font-size: 11px; padding-left: 2px;")
+
+    def click_manage_antenna_overrides(self):
+        """
+        '🔧 Maintenance Schedule' 버튼 핸들러.
+        antenna_overrides는 main_app(허브)에 공유 상태로 있으므로(Tab3도 참조해야 하기 때문),
+        여기서 읽고 쓸 때도 항상 self.main_app.antenna_overrides를 통해서 합니다.
+        """
+        current_overrides = getattr(self.main_app, 'antenna_overrides', [])
+        all_st_names = [st[0] for st in getattr(self.main_app, 'station_data', [])]
+
+        dialog = AntennaOverrideDialog(
+            current_overrides=current_overrides,
+            all_stations=all_st_names,
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.main_app.antenna_overrides = dialog.get_results()
+            self.save_settings()
+            self.update_antenna_override_status_label()
+            # 안테나 용량이 바뀌었으니, 이미 계산된 결과가 있다면 다시 계산이 필요하다는 것을 알려줌
+            if self.main_app.calculated_passes:
+                QMessageBox.information(
+                    self, "안내",
+                    "점검 일정이 변경되었습니다. 반영하려면 스케줄을 다시 계산해주세요."
+                )
+            self.update_summary_dashboard()
+
+    def click_manage_stations(self):
+        """
+        '🛰️ Manage Stations' 버튼 핸들러.
+        다이얼로그에서 사용자가 [Save]를 눌러 저장을 완료하면(Accepted),
+        디스크에 반영된 최신 내용을 다시 읽어와 화면 목록(gs_list)을 갱신합니다.
+        [Cancel]을 누르면 아무 파일도 바뀌지 않으므로 화면도 갱신하지 않습니다.
+        """
+        dialog = StationManagerDialog(stations_dir=self.stations_dir, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh_stations()
+
     def refresh_stations(self):
         self.gs_list.blockSignals(True)
         try:
             self.gs_list.clear()
             self.main_app.station_data = parse_stations_from_dir(self.stations_dir)
             for cfg in self.main_app.station_data:
-                self.gs_list.addItem(f"{cfg[0]} (Lat: {cfg[1]}, Lon: {cfg[2]}) [Down:{cfg[3]} / Cmd:{cfg[4]}]")
+                # 💡 RX/TX_Capacity는 station_data 튜플의 6, 7번째 값(인덱스 5, 6). 구버전 파일이면 항상 1.
+                rx_cap = cfg[5] if len(cfg) > 5 else 1
+                tx_cap = cfg[6] if len(cfg) > 6 else 1
+                self.gs_list.addItem(
+                    f"{cfg[0]} (Lat: {cfg[1]}, Lon: {cfg[2]}) [Down:{cfg[3]} / Cmd:{cfg[4]}] [RX:{rx_cap} / TX:{tx_cap}]"
+                )
         finally:
             self.gs_list.blockSignals(False)
 
@@ -913,9 +1166,73 @@ class PassPredictTab(QWidget):
             else:
                 QMessageBox.critical(self, "Download Error", f"Failed to download selected satellites.")    
 
+    def _max_concurrent_selected(self, selected_passes_for_station):
+        """
+        💡 [추가기능 2] 이 지상국에서 '선택된' 패스들 중, 어느 한 순간에 최대 몇 개가
+        동시에 겹치는지(peak concurrency)를 계산합니다. AOS/LOS 이벤트 스윕 방식이며,
+        core/scheduler.py의 resolve_station_group_with_capacity와 같은 원리를 사용하되
+        여기서는 배정이 아니라 '순수 집계'만 하면 되므로 훨씬 단순합니다.
+        """
+        if not selected_passes_for_station:
+            return 0
+        events = []
+        for p in selected_passes_for_station:
+            events.append((p['aos'], 1))
+            events.append((p['los'], 0))
+        events.sort(key=lambda e: (e[0], e[1]))  # 같은 시각이면 LOS(0)를 AOS(1)보다 먼저 처리
+
+        current = 0
+        peak = 0
+        for _time_val, ev_type in events:
+            if ev_type == 0:
+                current -= 1
+            else:
+                current += 1
+                peak = max(peak, current)
+        return peak
+
+    def update_tx_warning_banner(self):
+        """
+        💡 [추가기능 2] 지상국별로 '동시 선택된 패스 수'가 'TX 용량'을 넘는 경우를 찾아
+        경고 배너에 표시합니다. 정확한 커맨딩 충돌 여부는 Tab3에서만 알 수 있으므로,
+        여기서는 어디까지나 "가능성이 있다"는 사전 안내입니다.
+
+        ⚠️ [버그 수정] 예전에는 지상국의 '평소' TX 용량만 봤기 때문에, 점검 일정으로
+        TX 용량이 일시적으로 줄어든 시간대를 놓칠 수 있었습니다. 이제
+        find_capacity_overflow()로 그 시간대의 실제 유효 용량까지 반영해서 검사합니다.
+        """
+        station_data = getattr(self.main_app, 'station_data', [])
+        antenna_overrides = getattr(self.main_app, 'antenna_overrides', [])
+        tx_capacity_fns = {}
+        for st in station_data:
+            base_tx = st[6] if len(st) > 6 else 1
+            overrides_for_station = [ov for ov in antenna_overrides if ov.get("station") == st[0]]
+            tx_capacity_fns[st[0]] = build_capacity_lookup(base_tx, overrides_for_station, "tx_capacity")
+
+        selected_by_station = {}
+        for p in getattr(self.main_app, 'calculated_passes', []) or []:
+            if p.get('selected', False):
+                selected_by_station.setdefault(p['station'], []).append(p)
+
+        warning_lines = []
+        for st_name, passes_here in selected_by_station.items():
+            tx_capacity_fn = tx_capacity_fns.get(st_name, lambda dt: 1)
+            peak, excess = find_capacity_overflow(passes_here, tx_capacity_fn)
+            if excess > 0:
+                warning_lines.append(
+                    f"'{st_name}': 최대 {peak}개 동시 선택 (해당 시간대 TX 용량 초과분 {excess}개) → Tab3에서 커맨딩 대기/스왑될 수 있음"
+                )
+
+        if warning_lines:
+            self.lbl_tx_warning.setText("⚠️ TX 사전 경고 (실제 충돌 여부는 Tab3에서 확정됩니다):\n" + "\n".join(warning_lines))
+            self.lbl_tx_warning.setVisible(True)
+        else:
+            self.lbl_tx_warning.setVisible(False)
+
     def update_summary_dashboard(self):
         if not self.main_app.calculated_passes:
             self.lbl_summary_bar.setText("📊 Satellite Pass Distribution Summary: No data calculated.")
+            self.lbl_tx_warning.setVisible(False)
             return
             
         sat_stats = {}
@@ -936,6 +1253,7 @@ class PassPredictTab(QWidget):
             
         summary_text = "📊 <b>Pass Allocation Summary:</b> &nbsp;&nbsp;|&nbsp;&nbsp; " + " &nbsp;&nbsp;|&nbsp;&nbsp; ".join(summary_tokens)
         self.lbl_summary_bar.setText(summary_text)
+        self.update_tx_warning_banner()
 
     def populate_table(self):
         if getattr(self.main_app, 'is_populating', False): return
@@ -1038,7 +1356,44 @@ class PassPredictTab(QWidget):
         current_row, _, _ = user_data
         is_checked = (item.checkState() == Qt.CheckState.Checked)
         self.main_app.calculated_passes[current_row]['selected'] = is_checked
+
+        # 💡 [M3] 사용자가 수동으로 체크(선택)했을 때, 이 지상국의 안테나 용량을
+        #    초과하게 되는지 확인해서 알려줍니다. 강제로 막지는 않습니다 - 사용자가
+        #    의도적으로 용량을 넘겨 확인하고 싶은 경우도 있을 수 있으니, 정보 제공용 경고입니다.
+        if is_checked:
+            self._warn_if_capacity_exceeded(current_row)
+
         self.update_summary_dashboard()
+
+    def _warn_if_capacity_exceeded(self, row_idx):
+        """이 패스를 선택한 결과, 같은 지상국·같은 시간대에 겹치는 '선택된' 패스 개수가
+        해당 지상국의 RX 용량(안테나 대수)을 넘는지 확인하고, 넘으면 경고창을 띄웁니다."""
+        target = self.main_app.calculated_passes[row_idx]
+        st_name = target.get('station', '')
+
+        station_capacity = {
+            st[0]: (st[5] if len(st) > 5 else 1)
+            for st in getattr(self.main_app, 'station_data', [])
+        }
+        capacity = station_capacity.get(st_name, 1)
+
+        overlapping_selected = [
+            p for p in self.main_app.calculated_passes
+            if p is not target
+            and p.get('station') == st_name
+            and p.get('selected', False)
+            and not (p.get('los', '') <= target.get('aos', '') or p.get('aos', '') >= target.get('los', ''))
+        ]
+        # 자기 자신 포함 총 동시 선택 개수
+        total_concurrent = len(overlapping_selected) + 1
+
+        if total_concurrent > capacity:
+            QMessageBox.warning(
+                self, "안테나 용량 초과 경고",
+                f"'{st_name}' 지상국은 동시에 {capacity}개까지만 수신 가능합니다.\n"
+                f"현재 이 시간대에 {total_concurrent}개의 패스가 선택되어 있어 용량을 초과합니다.\n\n"
+                f"(선택은 그대로 유지됩니다 - 의도적인 선택이라면 무시하셔도 됩니다)"
+            )
 
     def click_export_csv(self):
         if not self.main_app.calculated_passes: return
@@ -1050,7 +1405,12 @@ class PassPredictTab(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save YAML Schedule", self.pass_output_dir, "YAML Files (*.yaml)")
         if path:
             # 💡 선택된 패스와 함께 전체 계산 패스 풀을 넘겨 Tab 3 스왑에 활용
-            export_to_yaml(path, self.main_app.calculated_passes, all_passes=getattr(self.main_app, 'calculated_passes', None))
+            export_to_yaml(
+                path, self.main_app.calculated_passes,
+                all_passes=getattr(self.main_app, 'calculated_passes', None),
+                station_data=getattr(self.main_app, 'station_data', None),
+                antenna_overrides=getattr(self.main_app, 'antenna_overrides', None)
+            )
 
     def set_all_checkboxes(self, check_state):
         if not self.main_app.calculated_passes: return
@@ -1071,7 +1431,11 @@ class PassPredictTab(QWidget):
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save Colorized Excel Schedule", self.pass_output_dir, "Excel Files (*.xlsx)")
         if path:
-            success, msg = export_to_excel_with_color(path, self.main_app.calculated_passes)
+            success, msg = export_to_excel_with_color(
+                path, self.main_app.calculated_passes,
+                station_data=getattr(self.main_app, 'station_data', None),
+                antenna_overrides=getattr(self.main_app, 'antenna_overrides', None)
+            )
             if success:
                 QMessageBox.information(self, "Export Success", "Excel file generated successfully!")
             else:

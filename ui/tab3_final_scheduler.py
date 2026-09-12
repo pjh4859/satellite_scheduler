@@ -1,6 +1,7 @@
 import os
 import yaml
 import re
+from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTableWidget, QTableWidgetItem, QLabel, QFileDialog, 
                              QHeaderView, QMessageBox, QRadioButton, QButtonGroup, 
@@ -12,6 +13,23 @@ from PyQt6.QtGui import QColor, QDesktopServices
 from core.color_manager import color_manager
 from core.exporter import export_final_schedule_to_csv, export_final_schedule_to_excel
 from core.plan_parser import normalize_sat_name
+from core.scheduler import build_capacity_lookup
+
+
+def _parse_iso_dt(value):
+    """
+    💡 [안테나 점검 일정 지원] Tab3는 YAML에서 불러온 패스 데이터를 다루기 때문에
+    aos/los가 실제 datetime 객체가 아니라 ISO 8601 문자열입니다 (예: "2026-01-01T00:00:00Z").
+    반면 안테나 점검 오버라이드의 start_dt/end_dt는 실제 datetime 객체로 저장되어 있어서,
+    이 둘을 그대로 비교하면 타입이 달라 TypeError가 납니다. 이 함수가 그 문자열을
+    datetime으로 변환해줍니다. 이미 datetime이면 그대로 반환합니다(방어적 처리).
+    """
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
 
 
 # ==============================================================================
@@ -307,7 +325,15 @@ class FinalSchedulerTab(QWidget):
             self.lbl_status.setStyleSheet("color: #D32F2F; font-weight: bold; margin-left: 10px; margin-right: 10px;")
             self.btn_generate_final.setEnabled(False)
 
-    def _evaluate_task_constraints(self, task, p_el, p_dur, st_info, st_name, completed_mains, curr_step, min_other_prog, max_lead_steps):
+    def _evaluate_task_constraints(self, task, p_el, p_dur, st_info, st_name, completed_mains, curr_step, min_other_prog, max_lead_steps,
+                                    tx_occupied_count=0, tx_capacity=1):
+        """
+        :param tx_occupied_count: 이 패스의 시간대(aos~los)와 겹치는 다른 패스들 중,
+                                   이미 이 지상국에서 CMD/BOTH(커맨딩)로 확정 배정된 개수.
+                                   (M2: TX 단일/다중 자원 추적 - 안테나 대수와 무관하게
+                                    "커맨딩 체인"은 별도의 용량으로 관리됩니다)
+        :param tx_capacity: 이 지상국이 동시에 커맨딩(TX) 가능한 채널 수 (기본 1).
+        """
         reject_reasons = []
 
         if p_el < task["min_el"]:
@@ -329,6 +355,14 @@ class FinalSchedulerTab(QWidget):
             elif not st_info['down']:
                 reject_reasons.append(f"GS {st_name} No DOWN")
 
+        # 💡 [M2] TX(커맨딩) 단일/다중 자원 제약 검사
+        #    이 작업이 CMD 또는 BOTH(커맨딩 포함)를 요구하는데, 같은 시간대에 이미
+        #    이 지상국의 TX 용량만큼 다른 패스가 커맨딩을 쓰고 있다면 배정할 수 없습니다.
+        #    (RX는 M1에서 안테나 대수만큼 동시 패스 자체가 허용되지만, 업링크 체인은
+        #     보통 1개뿐이라 "몇 대의 안테나로 동시에 보고 있는가"와는 별개의 제약입니다)
+        if req in ('CMD', 'BOTH') and tx_occupied_count >= tx_capacity:
+            reject_reasons.append(f"GS {st_name} TX Busy ({tx_occupied_count}/{tx_capacity})")
+
         pre_req = task["pre_req_main"].strip().upper()
         completed_upper = {m.upper() for m in completed_mains}
         if pre_req not in ["NONE", "NULL", ""] and pre_req not in completed_upper:
@@ -338,6 +372,29 @@ class FinalSchedulerTab(QWidget):
             reject_reasons.append(f"Step Lock (Lead > {max_lead_steps})")
 
         return reject_reasons
+
+    # --------------------------------------------------------------------------
+    # 💡 [M2 신규] TX(커맨딩) 자원 점유 추적 헬퍼
+    # ------------------------------------------------------------------------------
+    # tx_occupied_intervals: {station_name: [(aos_str, los_str), ...]} 형태로,
+    # "이 지상국에서 이미 CMD/BOTH로 확정 배정된 시간 구간"들을 계속 누적해서 기록합니다.
+    # aos/los는 YAML에서 그대로 불러온 ISO 8601 형식 문자열이며, 이 포맷은 문자열끼리
+    # 그대로 비교(<=, >=)해도 시간 순서와 동일하게 비교되므로 datetime 파싱 없이 처리합니다.
+    # --------------------------------------------------------------------------
+    def _count_tx_overlaps(self, tx_occupied_intervals, st_name, aos_str, los_str):
+        """이 지상국에서, 주어진 [aos_str, los_str] 구간과 시간이 겹치는
+        '이미 확정된 CMD/BOTH 점유 구간'이 몇 개인지 셉니다."""
+        intervals = tx_occupied_intervals.get(st_name, [])
+        count = 0
+        for occ_aos, occ_los in intervals:
+            # 두 구간이 겹치지 않는 경우: 하나가 끝난 뒤에 다른 하나가 시작하는 경우뿐
+            if not (occ_los <= aos_str or occ_aos >= los_str):
+                count += 1
+        return count
+
+    def _register_tx_usage(self, tx_occupied_intervals, st_name, aos_str, los_str):
+        """이 지상국의 [aos_str, los_str] 구간을 'CMD/BOTH로 확정 사용됨'으로 기록합니다."""
+        tx_occupied_intervals.setdefault(st_name, []).append((aos_str, los_str))
 
     # --------------------------------------------------------------------------
     # [핵심 엔진] LEOP 미션 스케줄러 (Swarm Cross-Satellite Swap 지원)
@@ -350,14 +407,29 @@ class FinalSchedulerTab(QWidget):
             max_lead_steps = self.spin_max_lead.value()
             strategy_idx = self.combo_strategy.currentIndex()  # 0: Strict, 1: Look-Ahead, 2: Standby Fill, 3: Cross-Sat Swap
             
-            # 1. 지상국 기능 파싱 (3: Downlink, 4: Command)[cite: 7]
+            # 1. 지상국 기능 파싱 (3: Downlink, 4: Command, 6: TX_Capacity)
             station_configs = getattr(self.main_app, 'station_data', [])
+            # 💡 [안테나 점검 일정 지원] Tab1에서 등록한 점검 일정을 그대로 가져와서 TX 용량에도 반영
+            antenna_overrides = getattr(self.main_app, 'antenna_overrides', [])
             st_caps = {}
             for st in station_configs:
                 st_name = str(st[0]).strip()
-                is_down = (str(st[3]).strip().upper() == 'Y') if len(st) > 3 else True[cite: 7]
-                is_cmd = (str(st[4]).strip().upper() == 'Y') if len(st) > 4 else True[cite: 7]
-                st_caps[st_name] = {'cmd': is_cmd, 'down': is_down}
+                # ⚠️ [버그 수정] 기존 코드는 `else True[cite: 7]`처럼 잘못된 문자열이 섞여 있어
+                #    len(st) <= 3인 경우(사실상 발생하지 않지만) 실행되면 NameError로 죽는 죽은 코드였습니다.
+                is_down = (str(st[3]).strip().upper() == 'Y') if len(st) > 3 else True
+                is_cmd = (str(st[4]).strip().upper() == 'Y') if len(st) > 4 else True
+                # 💡 [M2] TX_Capacity(인덱스 6). 구버전 station_data(길이 5)면 기본값 1.
+                base_tx_capacity = int(st[6]) if len(st) > 6 else 1
+                # 💡 [안테나 점검 일정 지원] 이 지상국에 해당하는 점검 오버라이드만 추려서
+                #    "그 시각의 유효 TX 용량"을 돌려주는 함수로 구성 (오버라이드 없으면 기존과 동일)
+                overrides_for_station = [ov for ov in antenna_overrides if ov.get("station") == st_name]
+                tx_capacity_fn = build_capacity_lookup(base_tx_capacity, overrides_for_station, "tx_capacity")
+                st_caps[st_name] = {'cmd': is_cmd, 'down': is_down, 'tx_capacity_fn': tx_capacity_fn}
+
+            # 💡 [M2] 지상국별 "이미 CMD/BOTH로 확정 배정된 시간 구간" 누적 트래커.
+            #    패스를 시간순으로 훑으면서, 커맨딩이 배정될 때마다 여기에 구간을 추가합니다.
+            #    나중 패스를 평가할 때 이 트래커를 참조해서 TX 자원이 이미 꽉 찼는지 확인합니다.
+            tx_occupied_intervals = {}
 
             # 2. 미션 제약조건 파싱
             sat_plans = {}
@@ -417,7 +489,14 @@ class FinalSchedulerTab(QWidget):
                 p_el = float(p.get("max_elevation_deg", p.get("max_el", 0)))
                 p_aos_str = p.get("aos", "")
                 p_los_str = p.get("los", "")
-                st_info = st_caps.get(st_name, {'cmd': True, 'down': True})
+                st_info = st_caps.get(st_name, {'cmd': True, 'down': True, 'tx_capacity_fn': (lambda dt: 1)})
+
+                # 💡 [M2] 이 패스(p)의 시간대 기준으로, 이 지상국의 TX가 이미 몇 개 점유 중인지 계산
+                p_tx_occupied = self._count_tx_overlaps(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
+                # 💡 [안테나 점검 일정 지원] 이 패스 자신의 AOS 시각 기준으로 그때의 유효 TX 용량을 조회
+                #    (aos는 문자열이므로 오버라이드의 datetime과 비교 가능하게 먼저 변환)
+                p_aos_dt = _parse_iso_dt(p['aos'])
+                p_tx_capacity = st_info.get('tx_capacity_fn', lambda dt: 1)(p_aos_dt) if p_aos_dt else 1
 
                 matched_plan_key = None
                 if p_sat_norm in sat_plans:
@@ -460,13 +539,23 @@ class FinalSchedulerTab(QWidget):
                 assigned_remark = ""
                 assigned_sat = p_sat_full
                 assigned_pass_no = f"Pass {p.get('pass_no', '')}"
+                # 💡 [버그 수정] 최종 표에 표시될 시간/기간/고도각. 기본값은 "현재 처리 중인 패스(p)"의 값이지만,
+                #    Cross-Satellite Swap으로 다른 위성의 다른 패스(other_p)에 작업이 배정되면
+                #    아래에서 other_p 자신의 값으로 덮어씁니다. (수정 전에는 스왑이 성공해도
+                #    항상 원래 패스 p의 시각을 그대로 보여줘서, 실제 커맨딩/수신이 일어나는
+                #    시각과 화면 표시가 어긋나는 문제가 있었습니다)
+                assigned_aos_str = p_aos_str
+                assigned_los_str = p_los_str
+                assigned_dur = p_dur
+                assigned_el = p_el
 
                 # --- 1. Mode 0: Strict Sequential ---
                 if strategy_idx == 0:
                     primary_task = uncompleted_tasks[0]
                     reject_reasons = self._evaluate_task_constraints(
                         primary_task, p_el, p_dur, st_info, st_name, 
-                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps,
+                        tx_occupied_count=p_tx_occupied, tx_capacity=p_tx_capacity
                     )
                     if not reject_reasons:
                         assigned_task = primary_task
@@ -476,6 +565,9 @@ class FinalSchedulerTab(QWidget):
                         assigned_activity = f"[{primary_task['sequence_id']}] {primary_task['main']}{sub_str}"
                         assigned_status = "Allocated"
                         assigned_remark = primary_task.get("remark", "")
+                        # 💡 [M2] 이 작업이 커맨딩(CMD/BOTH)을 썼다면 TX 점유 구간으로 기록
+                        if primary_task["req_cap"] in ('CMD', 'BOTH'):
+                            self._register_tx_usage(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
                     else:
                         assigned_activity = f"[{primary_task['main']}] Blocked ({', '.join(reject_reasons)})"
                         assigned_status = "Bypassed"
@@ -489,7 +581,8 @@ class FinalSchedulerTab(QWidget):
                     for candidate_task in uncompleted_tasks:
                         reasons = self._evaluate_task_constraints(
                             candidate_task, p_el, p_dur, st_info, st_name, 
-                            sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                            sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps,
+                            tx_occupied_count=p_tx_occupied, tx_capacity=p_tx_capacity
                         )
                         if not reasons:
                             assigned_task = candidate_task
@@ -501,6 +594,8 @@ class FinalSchedulerTab(QWidget):
                             assigned_activity = f"[{candidate_task['sequence_id']}] {candidate_task['main']}{sub_str}{pulled_tag}"
                             assigned_status = "Allocated"
                             assigned_remark = candidate_task.get("remark", "")
+                            if candidate_task["req_cap"] in ('CMD', 'BOTH'):
+                                self._register_tx_usage(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
                             break
                         elif candidate_task == primary_task:
                             first_reasons = reasons
@@ -515,7 +610,8 @@ class FinalSchedulerTab(QWidget):
                     primary_task = uncompleted_tasks[0]
                     reject_reasons = self._evaluate_task_constraints(
                         primary_task, p_el, p_dur, st_info, st_name, 
-                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps,
+                        tx_occupied_count=p_tx_occupied, tx_capacity=p_tx_capacity
                     )
                     if not reject_reasons:
                         assigned_task = primary_task
@@ -525,6 +621,8 @@ class FinalSchedulerTab(QWidget):
                         assigned_activity = f"[{primary_task['sequence_id']}] {primary_task['main']}{sub_str}"
                         assigned_status = "Allocated"
                         assigned_remark = primary_task.get("remark", "")
+                        if primary_task["req_cap"] in ('CMD', 'BOTH'):
+                            self._register_tx_usage(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
                     else:
                         assigned_status = "Standby"
                         assigned_activity = f"📡 [Standby] Routine TM Downlink / Health Check (Waits for [{primary_task['main']}])"
@@ -532,11 +630,12 @@ class FinalSchedulerTab(QWidget):
 
                 # --- 4. Mode 3: 🌐 Cross-Satellite Swap (Swarm Fallback) ---
                 elif strategy_idx == 3:
-                    # [1단계] 본래 작업 시도[cite: 8]
+                    # [1단계] 본래 작업 시도
                     primary_task = uncompleted_tasks[0]
                     reject_reasons = self._evaluate_task_constraints(
                         primary_task, p_el, p_dur, st_info, st_name, 
-                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                        sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps,
+                        tx_occupied_count=p_tx_occupied, tx_capacity=p_tx_capacity
                     )
                     if not reject_reasons:
                         assigned_task = primary_task
@@ -546,8 +645,10 @@ class FinalSchedulerTab(QWidget):
                         assigned_activity = f"[{primary_task['sequence_id']}] {primary_task['main']}{sub_str}"
                         assigned_status = "Allocated"
                         assigned_remark = primary_task.get("remark", "")
+                        if primary_task["req_cap"] in ('CMD', 'BOTH'):
+                            self._register_tx_usage(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
                     else:
-                        # [2단계] 동시간대 타 위성 후보 탐색 및 스왑[cite: 8]
+                        # [2단계] 동시간대 타 위성 후보 탐색 및 스왑
                         found_swap = False
                         other_candidates = []
                         
@@ -566,32 +667,52 @@ class FinalSchedulerTab(QWidget):
                             other_step = len(other_plan) - len(other_uncompleted)
                             o_dur = float(other_p.get("duration_sec", other_p.get("duration", p_dur)))
                             o_el = float(other_p.get("max_elevation_deg", other_p.get("max_el", p_el)))
+                            # 💡 [M2] 스왑 대상은 "이 지상국의 다른 시간대(other_p)"이므로,
+                            #    TX 점유 여부도 반드시 other_p 자신의 aos~los 구간 기준으로 다시 계산해야 합니다.
+                            #    (p_aos_str/p_los_str을 그대로 쓰면 엉뚱한 시간대를 검사하는 버그가 됩니다)
+                            o_aos_str = other_p.get("aos", "")
+                            o_los_str = other_p.get("los", "")
+                            o_tx_occupied = self._count_tx_overlaps(tx_occupied_intervals, st_name, o_aos_str, o_los_str)
+                            # 💡 [안테나 점검 일정 지원] 같은 지상국이라도 시각이 다르면 유효 용량이 다를 수 있으므로,
+                            #    반드시 other_p 자신의 AOS 시각 기준으로 다시 조회합니다.
+                            o_aos_dt = _parse_iso_dt(other_p['aos'])
+                            o_tx_capacity = st_info.get('tx_capacity_fn', lambda dt: 1)(o_aos_dt) if o_aos_dt else 1
                             
                             for o_task in other_uncompleted:
                                 o_reasons = self._evaluate_task_constraints(
                                     o_task, o_el, o_dur, st_info, st_name,
-                                    sat_completed_mains[other_sat_key], other_step, min_other_prog, max_lead_steps
+                                    sat_completed_mains[other_sat_key], other_step, min_other_prog, max_lead_steps,
+                                    tx_occupied_count=o_tx_occupied, tx_capacity=o_tx_capacity
                                 )
                                 if not o_reasons:
                                     o_task["completed"] = True
                                     sat_completed_mains[other_sat_key].add(o_task["main"])
                                     assigned_sat = other_p.get("satellite", other_sat_key)
                                     assigned_pass_no = f"Pass {other_p.get('pass_no', '')}"
+                                    # 💡 [버그 수정] 스왑이 성공했으므로, 화면에 표시될 시간/기간/고도각도
+                                    #    반드시 "실제로 커맨딩이 일어나는 other_p 자신의 값"으로 갱신합니다.
+                                    assigned_aos_str = o_aos_str
+                                    assigned_los_str = o_los_str
+                                    assigned_dur = o_dur
+                                    assigned_el = o_el
                                     sub_str = f" ({o_task['sub']})" if o_task['sub'] else ""
                                     assigned_activity = f"[{o_task['sequence_id']}] {o_task['main']}{sub_str} 🔄[Swapped from {matched_plan_key}]"
                                     assigned_status = "Allocated"
                                     assigned_remark = o_task.get("remark", "")
                                     assigned_task = o_task
                                     found_swap = True
+                                    if o_task["req_cap"] in ('CMD', 'BOTH'):
+                                        self._register_tx_usage(tx_occupied_intervals, st_name, o_aos_str, o_los_str)
                                     break
                             if found_swap: break
 
-                        # [3단계] 동일 위성 Look-Ahead 당겨오기 Fallback[cite: 8]
+                        # [3단계] 동일 위성 Look-Ahead 당겨오기 Fallback
                         if not found_swap:
                             for candidate_task in uncompleted_tasks[1:]:
                                 reasons = self._evaluate_task_constraints(
                                     candidate_task, p_el, p_dur, st_info, st_name, 
-                                    sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps
+                                    sat_completed_mains[matched_plan_key], curr_step, min_other_prog, max_lead_steps,
+                                    tx_occupied_count=p_tx_occupied, tx_capacity=p_tx_capacity
                                 )
                                 if not reasons:
                                     assigned_task = candidate_task
@@ -601,9 +722,11 @@ class FinalSchedulerTab(QWidget):
                                     assigned_activity = f"[{candidate_task['sequence_id']}] {candidate_task['main']}{sub_str} ⚡[Pulled Ahead]"
                                     assigned_status = "Allocated"
                                     assigned_remark = candidate_task.get("remark", "")
+                                    if candidate_task["req_cap"] in ('CMD', 'BOTH'):
+                                        self._register_tx_usage(tx_occupied_intervals, st_name, p_aos_str, p_los_str)
                                     break
 
-                        # [4단계] 최후 Bypassed 유지[cite: 8]
+                        # [4단계] 최후 Bypassed 유지
                         if not assigned_task:
                             assigned_activity = f"[{primary_task['main']}] Blocked ({', '.join(reject_reasons)})"
                             assigned_status = "Bypassed"
@@ -611,8 +734,8 @@ class FinalSchedulerTab(QWidget):
 
                 self.final_schedule_data.append({
                     "station": p.get("station", ""), "satellite": assigned_sat,
-                    "pass_no": assigned_pass_no, "aos": p_aos_str,
-                    "los": p_los_str, "duration": p_dur, "max_el": p_el,
+                    "pass_no": assigned_pass_no, "aos": assigned_aos_str,
+                    "los": assigned_los_str, "duration": assigned_dur, "max_el": assigned_el,
                     "status": assigned_status, "activity": assigned_activity,
                     "remark": assigned_remark, "raw_pass": p
                 })
@@ -714,5 +837,9 @@ class FinalSchedulerTab(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save Final Integrated Excel", self.final_output_dir, "Excel Files (*.xlsx)")
         if path:
             color_mode = "STATION" if self.radio_station.isChecked() else "SATELLITE"
-            export_final_schedule_to_excel(path, self.final_schedule_data, color_mode)
+            export_final_schedule_to_excel(
+                path, self.final_schedule_data, color_mode,
+                station_data=getattr(self.main_app, 'station_data', None),
+                antenna_overrides=getattr(self.main_app, 'antenna_overrides', None)
+            )
             QMessageBox.information(self, "Export Success", "Integrated Excel sheet saved successfully to final_output.")

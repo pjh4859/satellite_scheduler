@@ -1,21 +1,19 @@
 {
     "tab1": {
         "start_time_utc": "2026-10-13 13:53:43",
-        "end_time_utc": "2026-10-17 13:53:43",
+        "end_time_utc": "2026-12-20 13:53:43",
         "selected_tle_files": [
             "NEONSAT-1.tle",
-            "NEONSAT-1A.tle",
             "NEONSAT-2.tle",
             "NEONSAT-3.tle",
-            "NEONSAT-4.tle",
-            "SPACEEYE-T1.tle"
+            "NEONSAT-4.tle"
         ],
         "selected_gs_items": [
-            "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y]",
-            "Jeju (Lat: 33.5, Lon: 126.52) [Down:Y / Cmd:Y]",
-            "Svalbard (Lat: 78.23, Lon: 15.49) [Down:N / Cmd:Y]",
-            "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y]",
-            "Daejeon2 (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:N]"
+            "Daejeon (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:Y] [RX:1 / TX:1]",
+            "Jeju (Lat: 33.5, Lon: 126.52) [Down:Y / Cmd:Y] [RX:1 / TX:1]",
+            "Svalbard (Lat: 78.23, Lon: 15.49) [Down:N / Cmd:Y] [RX:1 / TX:1]",
+            "King Sejong (Lat: -62.22, Lon: -58.78) [Down:N / Cmd:Y] [RX:1 / TX:1]",
+            "Daejeon2 (Lat: 36.35, Lon: 127.38) [Down:Y / Cmd:N] [RX:1 / TX:1]"
         ],
         "min_el": 5,
         "min_dur": 300,
@@ -37,7 +35,8 @@
                     4,
                     5,
                     6
-                ]
+                ],
+                "applies_to_stations": null
             },
             {
                 "phase_name": "Phase 2",
@@ -54,18 +53,20 @@
                     4,
                     5,
                     6
-                ]
+                ],
+                "applies_to_stations": null
             }
         ],
         "shift_exempt_stations": [
             "Daejeon"
         ],
+        "antenna_overrides": [],
         "use_equalize": true,
         "equalize_target_sats": [
-            "SPACEEYE-T1",
-            "NEONSAT-1",
             "NEONSAT-3",
             "NEONSAT-2",
+            "NEONSAT-1",
+            "SPACEEYE-T1",
             "NEONSAT-1A"
         ],
         "min_pass_targets": {

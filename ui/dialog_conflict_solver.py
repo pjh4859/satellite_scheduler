@@ -8,7 +8,8 @@ from ui.dialog_equalize_rules import EqualizeRuleDialog
 class ConflictSolverDialog(QDialog):
     def __init__(self, all_satellites, equalize_target_sats=None, min_pass_targets=None, 
                  max_pass_targets=None, saved_weights=None, saved_priorities=None,
-                 all_stations=None, saved_excluded_stations=None, parent=None):
+                 all_stations=None, saved_excluded_stations=None, station_capacity=None,
+                 antenna_overrides=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚡ Multi-Weighted Auto Conflict Resolution")
         self.resize(580, 820)
@@ -21,6 +22,13 @@ class ConflictSolverDialog(QDialog):
         self.saved_weights = saved_weights or {}
         self.saved_priorities = saved_priorities or {}
         self.saved_excluded_stations = set(saved_excluded_stations or [])
+        # 💡 [추가기능 3] {station_name: (rx_capacity, tx_capacity)} - 없으면 전부 1/1로 간주
+        self.station_capacity = station_capacity or {}
+        # ⚠️ [버그 수정] 여기 표시되는 RX/TX는 "평소" 용량입니다. 점검 일정이 등록된 지상국은
+        #    지금 실제 용량이 다를 수 있다는 걸 알 수 있도록, 오버라이드가 있는 지상국 이름만 모아둡니다
+        #    (Auto Resolve의 실제 계산 로직은 이미 점검 일정을 정확히 반영하고 있고, 이건 어디까지나
+        #    화면에 보이는 참고용 숫자가 오해를 안 사도록 하기 위한 표시입니다).
+        self.stations_with_overrides = {ov.get("station") for ov in (antenna_overrides or [])}
         
         self.init_ui()
         self.restore_saved_inputs()
@@ -151,7 +159,13 @@ class ConflictSolverDialog(QDialog):
         self.list_stations = QListWidget()
         self.list_stations.setMaximumHeight(95)
         for st_name in self.all_stations:
-            item = QListWidgetItem(f"📡 {st_name}")
+            # 💡 [추가기능 3] RX/TX 용량을 옆에 같이 보여줘서, 가중치 조정할 때 참고할 수 있게 함
+            rx_cap, tx_cap = self.station_capacity.get(st_name, (1, 1))
+            cap_label = f"RX:{rx_cap} / TX:{tx_cap}"
+            # ⚠️ [버그 수정] 점검 일정이 등록된 지상국은 "평소" 값과 다를 수 있음을 표시
+            if st_name in self.stations_with_overrides:
+                cap_label += "  🔧점검일정 있음(평소값 기준)"
+            item = QListWidgetItem(f"📡 {st_name}  ({cap_label})")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if st_name in self.saved_excluded_stations else Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, st_name)
